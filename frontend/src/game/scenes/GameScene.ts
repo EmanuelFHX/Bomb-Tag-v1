@@ -357,12 +357,19 @@ export class GameScene extends Phaser.Scene {
 
   private startFinalBattleMusic() {
     const music = this.getFinalBattleMusic();
+    this.finalBattleMusicPrimed = true;
     music.muted = false;
-    music.volume = 0.68;
+    music.volume = 0.9;
     music.currentTime = 42;
     void music.play().catch(() => {
-      this.input.once("pointerdown", () => void music.play());
-      this.input.keyboard?.once("keydown", () => void music.play());
+      const resume = () => {
+        music.muted = false;
+        music.volume = 0.9;
+        music.currentTime = 42;
+        void music.play();
+      };
+      this.input.once("pointerdown", resume);
+      this.input.keyboard?.once("keydown", resume);
     });
   }
 
@@ -373,14 +380,13 @@ export class GameScene extends Phaser.Scene {
 
     const music = this.getFinalBattleMusic();
     music.muted = true;
+    music.volume = 0;
     music.currentTime = 42;
     void music.play().then(() => {
-      music.pause();
-      music.currentTime = 42;
-      music.muted = false;
       this.finalBattleMusicPrimed = true;
     }).catch(() => {
       music.muted = false;
+      music.volume = 0.9;
     });
   }
 
@@ -388,6 +394,7 @@ export class GameScene extends Phaser.Scene {
     this.finalBattleMusic ??= new Audio("/audio/final-battle.mp4");
     this.finalBattleMusic.loop = true;
     this.finalBattleMusic.preload = "auto";
+    this.finalBattleMusic.crossOrigin = "anonymous";
     return this.finalBattleMusic;
   }
 
