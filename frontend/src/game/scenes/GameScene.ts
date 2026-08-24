@@ -50,8 +50,8 @@ const TEXT = {
     special: "SPECIAL",
     finalDuel: "FINAL DUEL",
     playersRemain: (count: number) => `${count} PLAYERS REMAIN`,
-    threePlayers: "3 PLAYERS LEFT\nDASH RECHARGES OVER TIME",
-    livesRestored: "LIVES RESTORED",
+    threePlayers: "3 PLAYERS LEFT\nSPECIAL ROUND",
+    livesRestored: "LIVES RESTORED\n3 LIVES FOR EACH FINALIST",
     eliminated: (name: string) => `${name} ELIMINATED`,
     wins: (name: string) => `${name} WINS\nR TO REMATCH`,
     controls: "WASD move  |  Mouse aim  |  Left click throw/shoot  |  Shift/Space dash  |  R rematch",
@@ -69,8 +69,8 @@ const TEXT = {
     special: "ESPECIAL",
     finalDuel: "DUELO FINAL",
     playersRemain: (count: number) => `${count} JOGADORES RESTANTES`,
-    threePlayers: "3 JOGADORES RESTANTES\nDASH RECARREGA COM O TEMPO",
-    livesRestored: "VIDAS RESTAURADAS",
+    threePlayers: "3 JOGADORES RESTANTES\nRODADA ESPECIAL",
+    livesRestored: "VIDAS RESTAURADAS\n3 VIDAS PARA CADA FINALISTA",
     eliminated: (name: string) => `${name} ELIMINADO`,
     wins: (name: string) => `${name} VENCEU\nR PARA REVANCHE`,
     controls: "WASD mover  |  Mouse mirar  |  Clique esquerdo lancar/atirar  |  Shift/Espaco dash  |  R revanche",
@@ -673,12 +673,12 @@ export class GameScene extends Phaser.Scene {
     this.transferBomb(nextOwner);
     this.updateHud(true);
     this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
-    this.showRoundMessage(roundMessage, alivePlayers.length <= 3 ? "#ffcf33" : "#f7f8ff", 1000);
+    this.showRoundMessage(roundMessage, alivePlayers.length <= 3 ? "#ffcf33" : "#f7f8ff", isSpecialRound ? 1700 : 1000);
     if (shouldRestoreSpecialLives) {
-      this.time.delayedCall(1120, () => {
+      this.time.delayedCall(1860, () => {
         if (!this.matchOver && !this.roundResolving) {
           this.currentRoundMessageKey = "livesRestored";
-          this.showRoundMessage(TEXT[this.language].livesRestored, "#86f7ff", 900);
+          this.showRoundMessage(TEXT[this.language].livesRestored, "#86f7ff", 1300);
         }
       });
     }
@@ -695,22 +695,39 @@ export class GameScene extends Phaser.Scene {
 
   private showRoundMessage(message: string, color: string, duration: number) {
     const lines = message.split("\n").length;
-    this.roundMessagePanel.setSize(lines > 1 ? 760 : 620, lines > 1 ? 154 : 118);
-    this.roundMessagePanel.setAlpha(0.82);
+    const isSpecialMessage = this.currentRoundMessageKey === "threePlayers" || this.currentRoundMessageKey === "livesRestored";
+    this.roundMessagePanel.setSize(
+      isSpecialMessage ? 860 : lines > 1 ? 760 : 620,
+      isSpecialMessage ? 190 : lines > 1 ? 154 : 118
+    );
+    this.roundMessagePanel.setAlpha(isSpecialMessage ? 0.92 : 0.82);
+    this.roundMessagePanel.setStrokeStyle(isSpecialMessage ? 4 : 2, isSpecialMessage ? 0xffcf33 : 0xffffff, isSpecialMessage ? 0.68 : 0.12);
     this.roundMessagePanel.setVisible(true);
     this.roundMessage.setText(message);
     this.roundMessage.setColor(color);
     this.roundMessage.setAlpha(1);
-    this.roundMessage.setScale(0.92);
+    this.roundMessage.setFontSize(isSpecialMessage ? 50 : 42);
+    this.roundMessage.setScale(isSpecialMessage ? 0.78 : 0.92);
     this.roundMessage.setVisible(true);
     this.tweens.killTweensOf(this.roundMessage);
     this.tweens.killTweensOf(this.roundMessagePanel);
     this.tweens.add({
       targets: [this.roundMessage, this.roundMessagePanel],
       scale: 1,
-      duration: 120,
-      ease: "Quad.easeOut"
+      duration: isSpecialMessage ? 220 : 120,
+      ease: "Back.easeOut"
     });
+    if (isSpecialMessage) {
+      this.cameras.main.flash(180, 255, 207, 51, false);
+      this.tweens.add({
+        targets: this.roundMessage,
+        scale: 1.08,
+        delay: 260,
+        duration: 180,
+        yoyo: true,
+        ease: "Sine.easeInOut"
+      });
+    }
 
     if (duration < 999999) {
       this.tweens.add({
