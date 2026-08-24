@@ -51,6 +51,7 @@ const TEXT = {
     finalDuel: "FINAL DUEL",
     playersRemain: (count: number) => `${count} PLAYERS REMAIN`,
     threePlayers: "3 PLAYERS LEFT\nDASH RECHARGES OVER TIME",
+    livesRestored: "LIVES RESTORED",
     eliminated: (name: string) => `${name} ELIMINATED`,
     wins: (name: string) => `${name} WINS\nR TO REMATCH`,
     controls: "WASD move  |  Mouse aim  |  Left click throw/shoot  |  Shift/Space dash  |  R rematch",
@@ -69,6 +70,7 @@ const TEXT = {
     finalDuel: "DUELO FINAL",
     playersRemain: (count: number) => `${count} JOGADORES RESTANTES`,
     threePlayers: "3 JOGADORES RESTANTES\nDASH RECARREGA COM O TEMPO",
+    livesRestored: "VIDAS RESTAURADAS",
     eliminated: (name: string) => `${name} ELIMINADO`,
     wins: (name: string) => `${name} VENCEU\nR PARA REVANCHE`,
     controls: "WASD mover  |  Mouse mirar  |  Clique esquerdo lancar/atirar  |  Shift/Espaco dash  |  R revanche",
@@ -97,7 +99,7 @@ export class GameScene extends Phaser.Scene {
   private dangerOverlay!: Phaser.GameObjects.Rectangle;
   private roundMessagePanel!: Phaser.GameObjects.Rectangle;
   private roundMessage!: Phaser.GameObjects.Text;
-  private currentRoundMessageKey: "playersRemain" | "threePlayers" | "finalDuel" | "matchOver" | "" = "";
+  private currentRoundMessageKey: "playersRemain" | "threePlayers" | "livesRestored" | "finalDuel" | "matchOver" | "" = "";
   private roundEndsAt = 0;
   private roundTimerSeconds: number = BOMB.timerSeconds;
   private roundResolving = false;
@@ -630,6 +632,7 @@ export class GameScene extends Phaser.Scene {
     const stage = this.getRoundStage(alivePlayers.length);
     const nextOwner = Phaser.Utils.Array.GetRandom(alivePlayers);
     const isSpecialRound = alivePlayers.length === 3;
+    const shouldRestoreSpecialLives = isSpecialRound && !this.specialRoundLivesRestored;
     const message = typeof aliveCountOrMessage === "number"
       ? TEXT[this.language].playersRemain(aliveCountOrMessage)
       : aliveCountOrMessage;
@@ -657,7 +660,7 @@ export class GameScene extends Phaser.Scene {
     for (const player of alivePlayers) {
       player.setDashRechargeEnabled(alivePlayers.length <= 3);
       player.resetDashCharges();
-      if (isSpecialRound && !this.specialRoundLivesRestored) {
+      if (shouldRestoreSpecialLives) {
         player.restoreLives();
       }
       player.clearWeapon();
@@ -671,6 +674,14 @@ export class GameScene extends Phaser.Scene {
     this.updateHud(true);
     this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
     this.showRoundMessage(roundMessage, alivePlayers.length <= 3 ? "#ffcf33" : "#f7f8ff", 1000);
+    if (shouldRestoreSpecialLives) {
+      this.time.delayedCall(1120, () => {
+        if (!this.matchOver && !this.roundResolving) {
+          this.currentRoundMessageKey = "livesRestored";
+          this.showRoundMessage(TEXT[this.language].livesRestored, "#86f7ff", 900);
+        }
+      });
+    }
   }
 
   private endMatch(winner: Player) {
@@ -914,6 +925,10 @@ export class GameScene extends Phaser.Scene {
 
     if (this.currentRoundMessageKey === "threePlayers") {
       return TEXT[this.language].threePlayers;
+    }
+
+    if (this.currentRoundMessageKey === "livesRestored") {
+      return TEXT[this.language].livesRestored;
     }
 
     if (this.currentRoundMessageKey === "finalDuel") {
