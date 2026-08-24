@@ -115,22 +115,23 @@ export class GameScene extends Phaser.Scene {
 
   private createArena(aliveCount: number) {
     const palette = this.getArenaPalette(aliveCount);
+    this.arenaRect = this.getArenaBounds(aliveCount);
     this.graphics.clear();
     this.graphics.fillStyle(palette.outer, 1);
     this.graphics.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
     this.graphics.fillStyle(palette.floor, 1);
-    this.graphics.fillRoundedRect(ARENA.x, ARENA.y, ARENA.width, ARENA.height, 8);
+    this.graphics.fillRoundedRect(this.arenaRect.x, this.arenaRect.y, this.arenaRect.width, this.arenaRect.height, 8);
 
     this.graphics.lineStyle(ARENA.wallThickness, palette.wall, 1);
-    this.graphics.strokeRect(ARENA.x, ARENA.y, ARENA.width, ARENA.height);
+    this.graphics.strokeRect(this.arenaRect.x, this.arenaRect.y, this.arenaRect.width, this.arenaRect.height);
 
     this.graphics.lineStyle(1, palette.grid, 0.08);
-    for (let x = ARENA.x + 80; x < ARENA.x + ARENA.width; x += 80) {
-      this.graphics.lineBetween(x, ARENA.y, x, ARENA.y + ARENA.height);
+    for (let x = this.arenaRect.x + 80; x < this.arenaRect.right; x += 80) {
+      this.graphics.lineBetween(x, this.arenaRect.y, x, this.arenaRect.bottom);
     }
-    for (let y = ARENA.y + 80; y < ARENA.y + ARENA.height; y += 80) {
-      this.graphics.lineBetween(ARENA.x, y, ARENA.x + ARENA.width, y);
+    for (let y = this.arenaRect.y + 80; y < this.arenaRect.bottom; y += 80) {
+      this.graphics.lineBetween(this.arenaRect.x, y, this.arenaRect.right, y);
     }
   }
 
@@ -333,6 +334,9 @@ export class GameScene extends Phaser.Scene {
     this.roundEndsAt = this.time.now + stage.timerSeconds * 1000;
     this.audio.resetTimerTicks();
     this.createArena(alivePlayers.length);
+    for (const player of alivePlayers) {
+      player.keepInside(this.arenaRect);
+    }
     this.bomb.setIntensity(stage.bombSpeedMultiplier);
     this.transferBomb(nextOwner);
     this.updateHud(true);
@@ -422,6 +426,16 @@ export class GameScene extends Phaser.Scene {
       wall: 0x343946,
       grid: 0xffffff
     };
+  }
+
+  private getArenaBounds(aliveCount: number) {
+    const scale = aliveCount <= 2 ? 0.74 : aliveCount <= 3 ? 0.84 : 1;
+    const width = ARENA.width * scale;
+    const height = ARENA.height * scale;
+    const x = ARENA.x + (ARENA.width - width) / 2;
+    const y = ARENA.y + (ARENA.height - height) / 2;
+
+    return new Phaser.Geom.Rectangle(x, y, width, height);
   }
 
   private setTextIfChanged(
