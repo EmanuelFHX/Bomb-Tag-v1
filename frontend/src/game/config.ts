@@ -19,7 +19,8 @@ export const PLAYER = {
   dashDurationMs: 180,
   dashInvulnerabilityMs: 150,
   dashCooldownMs: 1800,
-  dashCharges: 2
+  normalDashCharges: 3,
+  specialDashCharges: 2
 } as const;
 
 export const BOMB = {
