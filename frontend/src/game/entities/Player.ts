@@ -54,7 +54,7 @@ export class Player {
     this.bombHalo.setStrokeStyle(3, 0xffcf33, 0.75);
     this.bombHalo.setVisible(false);
 
-    this.dashWake = scene.add.ellipse(0, 0, PLAYER.radius * 2.9, PLAYER.radius * 1.2, 0x8defff, 0);
+    this.dashWake = scene.add.ellipse(0, 0, PLAYER.radius * 3.1, PLAYER.radius * 1.35, color, 0);
     this.dashWake.setVisible(false);
 
     this.body = scene.add.circle(0, 0, PLAYER.radius, color, 1);
@@ -72,10 +72,11 @@ export class Player {
     this.label.setOrigin(0.5);
 
     this.container = scene.add.container(x, y, [this.dashWake, this.bombHalo, this.body, this.aim, this.label]);
+    this.container.setDepth(3);
 
     for (let index = 0; index < 5; index += 1) {
       const afterimage = scene.add.circle(x, y, PLAYER.radius, color, 0);
-      afterimage.setDepth(-0.5);
+      afterimage.setDepth(2);
       afterimage.setVisible(false);
       this.afterimages.push(afterimage);
     }
@@ -137,8 +138,9 @@ export class Player {
     this.invulnerableUntil = now + PLAYER.dashInvulnerabilityMs;
     this.velocity.copy(direction.normalize().scale(PLAYER.dashSpeed));
     this.dashWake.setRotation(direction.angle());
+    this.dashWake.setFillStyle(this.color, 0.5);
     this.dashWake.setVisible(true);
-    this.dashWake.setAlpha(0.45);
+    this.dashWake.setAlpha(this.kind === "human" ? 0.52 : 0.34);
     this.scene.tweens.add({
       targets: this.body,
       scaleX: 1.25,
@@ -288,9 +290,9 @@ export class Player {
     this.nextAfterimageAt = this.scene.time.now + 28;
     const afterimage = this.afterimages[this.afterimageIndex];
     afterimage.setPosition(this.x, this.y);
-    afterimage.setFillStyle(this.color, this.kind === "human" ? 0.28 : 0.16);
-    afterimage.setScale(1);
-    afterimage.setAlpha(this.kind === "human" ? 0.28 : 0.16);
+    afterimage.setFillStyle(this.color, this.kind === "human" ? 0.42 : 0.24);
+    afterimage.setScale(1.08);
+    afterimage.setAlpha(this.kind === "human" ? 0.42 : 0.24);
     afterimage.setVisible(true);
     this.scene.tweens.killTweensOf(afterimage);
     this.scene.tweens.add({

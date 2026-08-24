@@ -325,7 +325,11 @@ export class GameScene extends Phaser.Scene {
     const stage = this.getRoundStage(alivePlayers.length);
     const nextOwner = Phaser.Utils.Array.GetRandom(alivePlayers);
     const isSpecialRound = alivePlayers.length === 3;
-    const roundMessage = alivePlayers.length === 2 ? "FINAL DUEL" : isSpecialRound ? "3 PLAYERS RESTANTES" : message;
+    const roundMessage = alivePlayers.length === 2
+      ? "FINAL DUEL"
+      : isSpecialRound
+        ? "3 PLAYERS RESTANTES\nDASH RECARREGA COM O TEMPO"
+        : message;
 
     this.roundResolving = false;
     this.roundTimerSeconds = stage.timerSeconds;
