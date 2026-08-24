@@ -59,6 +59,10 @@ export const WEAPON = {
   shotCooldownMs: 1250,
   pickupDetectRadius: 46,
   botSeekRadius: 390,
+  botShotEvadeRadius: 74,
+  botShotLookAheadMs: 620,
+  botArmedThreatRange: 520,
+  botArmedLineRadius: 88,
   botShootMinRange: 170,
   botShootRange: 560,
   botAimDot: 0.92

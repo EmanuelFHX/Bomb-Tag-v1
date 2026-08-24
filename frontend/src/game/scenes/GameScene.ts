@@ -1038,6 +1038,12 @@ export class GameScene extends Phaser.Scene {
       : new Phaser.Math.Vector2(this.human.x, this.human.y);
     const moveDirection = new Phaser.Math.Vector2(0, 0);
     let shouldDash = false;
+    const shotThreat = this.getShotThreat(bot);
+    if (shotThreat.risk > 0) {
+      moveDirection.copy(shotThreat.escapeDirection);
+      shouldDash = shotThreat.risk > 0.82 && bot.dashChargeCount > 0;
+      return { aimTarget, moveDirection, shouldDash };
+    }
 
     if (this.bomb.state === "HELD") {
       if (this.bomb.owner === bot && fallbackTarget) {
@@ -1071,6 +1077,13 @@ export class GameScene extends Phaser.Scene {
       return { aimTarget, moveDirection, shouldDash };
     }
 
+    const armedThreat = this.getArmedOpponentThreat(bot);
+    if (armedThreat.risk > 0) {
+      moveDirection.copy(armedThreat.escapeDirection);
+      shouldDash = armedThreat.risk > 0.84 && bot.dashChargeCount > 0;
+      return { aimTarget, moveDirection, shouldDash };
+    }
+
     const pickup = this.getNearestWeaponPickup(bot);
     if (!bot.hasWeapon && pickup) {
       moveDirection.set(pickup.shape.x - bot.x, pickup.shape.y - bot.y).normalize();
@@ -1097,6 +1110,96 @@ export class GameScene extends Phaser.Scene {
         const distanceB = Phaser.Math.Distance.Squared(player.x, player.y, b.shape.x, b.shape.y);
         return distanceA - distanceB;
       })[0];
+  }
+
+  private getShotThreat(bot: Player) {
+    const escapeDirection = new Phaser.Math.Vector2(0, 0);
+    let highestRisk = 0;
+
+    for (const shot of this.shots) {
+      if (shot.owner === bot || shot.velocity.lengthSq() === 0) {
+        continue;
+      }
+
+      const fromShotToBot = new Phaser.Math.Vector2(bot.x - shot.shape.x, bot.y - shot.shape.y);
+      const shotDirection = shot.velocity.clone().normalize();
+      const speed = Math.max(shot.velocity.length(), 1);
+      const timeAlongPathMs = (fromShotToBot.dot(shotDirection) / speed) * 1000;
+
+      if (timeAlongPathMs < -80 || timeAlongPathMs > WEAPON.botShotLookAheadMs) {
+        continue;
+      }
+
+      const closestPoint = new Phaser.Math.Vector2(shot.shape.x, shot.shape.y).add(
+        shotDirection.clone().scale((timeAlongPathMs / 1000) * speed)
+      );
+      const distanceToPath = Phaser.Math.Distance.Between(bot.x, bot.y, closestPoint.x, closestPoint.y);
+      if (distanceToPath > WEAPON.botShotEvadeRadius) {
+        continue;
+      }
+
+      const side = Math.sign(fromShotToBot.cross(shotDirection)) || 1;
+      const candidate = new Phaser.Math.Vector2(-shotDirection.y * side, shotDirection.x * side);
+      const centerPull = new Phaser.Math.Vector2(
+        this.arenaRect.centerX - bot.x,
+        this.arenaRect.centerY - bot.y
+      ).normalize();
+      candidate.scale(0.82).add(centerPull.scale(0.18)).normalize();
+
+      const distanceRisk = 1 - distanceToPath / WEAPON.botShotEvadeRadius;
+      const timingRisk = 1 - Math.max(0, timeAlongPathMs) / WEAPON.botShotLookAheadMs;
+      const risk = Phaser.Math.Clamp(distanceRisk * 0.68 + timingRisk * 0.32, 0, 1);
+      if (risk > highestRisk) {
+        highestRisk = risk;
+        escapeDirection.copy(candidate);
+      }
+    }
+
+    return { risk: highestRisk, escapeDirection };
+  }
+
+  private getArmedOpponentThreat(bot: Player) {
+    const escapeDirection = new Phaser.Math.Vector2(0, 0);
+    let highestRisk = 0;
+
+    for (const opponent of this.getAlivePlayers()) {
+      if (opponent === bot || !opponent.hasWeapon) {
+        continue;
+      }
+
+      const fromOpponentToBot = new Phaser.Math.Vector2(bot.x - opponent.x, bot.y - opponent.y);
+      const distance = fromOpponentToBot.length();
+      if (distance <= 0 || distance > WEAPON.botArmedThreatRange) {
+        continue;
+      }
+
+      const aimDirection = opponent.aimDirection.clone().normalize();
+      const projection = fromOpponentToBot.dot(aimDirection);
+      if (projection < 0) {
+        continue;
+      }
+
+      const closestPoint = new Phaser.Math.Vector2(opponent.x, opponent.y).add(aimDirection.clone().scale(projection));
+      const distanceToLine = Phaser.Math.Distance.Between(bot.x, bot.y, closestPoint.x, closestPoint.y);
+      if (distanceToLine > WEAPON.botArmedLineRadius) {
+        continue;
+      }
+
+      const side = Math.sign(fromOpponentToBot.cross(aimDirection)) || 1;
+      const candidate = new Phaser.Math.Vector2(-aimDirection.y * side, aimDirection.x * side);
+      const away = fromOpponentToBot.normalize();
+      candidate.scale(0.74).add(away.scale(0.26)).normalize();
+
+      const lineRisk = 1 - distanceToLine / WEAPON.botArmedLineRadius;
+      const rangeRisk = 1 - distance / WEAPON.botArmedThreatRange;
+      const risk = Phaser.Math.Clamp(lineRisk * 0.72 + rangeRisk * 0.28, 0, 1);
+      if (risk > highestRisk) {
+        highestRisk = risk;
+        escapeDirection.copy(candidate);
+      }
+    }
+
+    return { risk: highestRisk, escapeDirection };
   }
 
   private getBombThreat(bot: Player) {
