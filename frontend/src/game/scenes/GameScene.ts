@@ -33,8 +33,9 @@ export class GameScene extends Phaser.Scene {
   private hudTimer!: Phaser.GameObjects.Text;
   private hudOwner!: Phaser.GameObjects.Text;
   private hudStage!: Phaser.GameObjects.Text;
-  private hudDash!: Phaser.GameObjects.Text;
   private hudPlayers!: Phaser.GameObjects.Text;
+  private dashSlots: Phaser.GameObjects.Rectangle[] = [];
+  private dashSlotFills: Phaser.GameObjects.Rectangle[] = [];
   private roundMessage!: Phaser.GameObjects.Text;
   private roundEndsAt = 0;
   private roundTimerSeconds: number = BOMB.timerSeconds;
@@ -45,7 +46,7 @@ export class GameScene extends Phaser.Scene {
   private lastOwnerText = "";
   private lastPlayersText = "";
   private lastStageText = "";
-  private lastDashText = "";
+  private lastDashReady = -1;
   private botThrowReadyAt = new Map<string, number>();
 
   constructor() {
@@ -176,7 +177,8 @@ export class GameScene extends Phaser.Scene {
     this.hudOwner = this.add.text(ARENA.x + 142, 28, "BOMB: YOU", baseStyle);
     this.hudPlayers = this.add.text(ARENA.x + 320, 28, "PLAYERS: 8", baseStyle);
     this.hudStage = this.add.text(ARENA.x + 470, 28, "STAGE: OPENING", baseStyle);
-    this.hudDash = this.add.text(GAME_WIDTH - 245, 28, "DASH: ◆ ◆", baseStyle);
+    this.add.text(GAME_WIDTH - 252, 28, "DASH", baseStyle);
+    this.createDashHud();
     this.add.text(
       ARENA.x,
       GAME_HEIGHT - 34,
@@ -300,13 +302,12 @@ export class GameScene extends Phaser.Scene {
     const aliveCount = this.getAlivePlayers().length;
     const playersText = `PLAYERS: ${aliveCount}`;
     const stageText = `STAGE: ${this.getStageName(aliveCount)}`;
-    const dashText = `DASH: ${this.getDashText()}`;
 
     this.setTextIfChanged(this.hudTimer, "lastTimerText", timerText);
     this.setTextIfChanged(this.hudOwner, "lastOwnerText", ownerText);
     this.setTextIfChanged(this.hudPlayers, "lastPlayersText", playersText);
     this.setTextIfChanged(this.hudStage, "lastStageText", stageText);
-    this.setTextIfChanged(this.hudDash, "lastDashText", dashText);
+    this.updateDashHud();
 
     const pulse = 1 + (1 - remaining / this.roundTimerSeconds) * 0.42;
     this.bomb.fuse.setScale(pulse);
@@ -317,11 +318,6 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.hudTimer.setColor("#f7f8ff");
     }
-  }
-
-  private getDashText() {
-    const ready = this.human.dashChargeCount;
-    return Array.from({ length: PLAYER.dashCharges }, (_, index) => (index < ready ? "◆" : "◇")).join(" ");
   }
 
   private startRound(message: string) {
@@ -441,7 +437,7 @@ export class GameScene extends Phaser.Scene {
 
   private setTextIfChanged(
     target: Phaser.GameObjects.Text,
-    cacheKey: "lastTimerText" | "lastOwnerText" | "lastPlayersText" | "lastStageText" | "lastDashText",
+    cacheKey: "lastTimerText" | "lastOwnerText" | "lastPlayersText" | "lastStageText",
     value: string
   ) {
     if (this[cacheKey] === value) {
@@ -450,6 +446,38 @@ export class GameScene extends Phaser.Scene {
 
     this[cacheKey] = value;
     target.setText(value);
+  }
+
+  private createDashHud() {
+    const startX = GAME_WIDTH - 158;
+    const y = 38;
+
+    for (let index = 0; index < PLAYER.dashCharges; index += 1) {
+      const x = startX + index * 48;
+      const slot = this.add.rectangle(x, y, 34, 14, 0x222733, 1);
+      slot.setStrokeStyle(2, 0x8defff, 0.45);
+
+      const fill = this.add.rectangle(x, y, 26, 8, 0x8defff, 1);
+      fill.setAlpha(0.95);
+
+      this.dashSlots.push(slot);
+      this.dashSlotFills.push(fill);
+    }
+  }
+
+  private updateDashHud() {
+    const ready = this.human.dashChargeCount;
+    if (ready === this.lastDashReady) {
+      return;
+    }
+
+    this.lastDashReady = ready;
+    for (let index = 0; index < this.dashSlotFills.length; index += 1) {
+      const isReady = index < ready;
+      this.dashSlotFills[index].setAlpha(isReady ? 0.95 : 0.16);
+      this.dashSlotFills[index].setFillStyle(isReady ? 0x8defff : 0x56606f, 1);
+      this.dashSlots[index].setStrokeStyle(2, isReady ? 0x8defff : 0x56606f, isReady ? 0.72 : 0.35);
+    }
   }
 
   private getBotIntent(bot: Player): BotIntent {

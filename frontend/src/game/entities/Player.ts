@@ -17,6 +17,7 @@ export class Player {
   readonly aim: Phaser.GameObjects.Rectangle;
   readonly label: Phaser.GameObjects.Text;
   readonly bombHalo: Phaser.GameObjects.Arc;
+  readonly dashWake: Phaser.GameObjects.Ellipse;
 
   velocity = new Phaser.Math.Vector2();
   aimDirection = new Phaser.Math.Vector2(1, 0);
@@ -28,6 +29,9 @@ export class Player {
   private invulnerableUntil = 0;
   private botDirection = new Phaser.Math.Vector2(1, 0);
   private nextBotDecisionAt = 0;
+  private readonly afterimages: Phaser.GameObjects.Arc[] = [];
+  private afterimageIndex = 0;
+  private nextAfterimageAt = 0;
 
   constructor(
     scene: Phaser.Scene,
@@ -49,6 +53,9 @@ export class Player {
     this.bombHalo.setStrokeStyle(3, 0xffcf33, 0.75);
     this.bombHalo.setVisible(false);
 
+    this.dashWake = scene.add.ellipse(0, 0, PLAYER.radius * 2.9, PLAYER.radius * 1.2, 0x8defff, 0);
+    this.dashWake.setVisible(false);
+
     this.body = scene.add.circle(0, 0, PLAYER.radius, color, 1);
     this.body.setStrokeStyle(3, 0xffffff, kind === "human" ? 0.9 : 0.35);
 
@@ -63,7 +70,14 @@ export class Player {
     });
     this.label.setOrigin(0.5);
 
-    this.container = scene.add.container(x, y, [this.bombHalo, this.body, this.aim, this.label]);
+    this.container = scene.add.container(x, y, [this.dashWake, this.bombHalo, this.body, this.aim, this.label]);
+
+    for (let index = 0; index < 5; index += 1) {
+      const afterimage = scene.add.circle(x, y, PLAYER.radius, color, 0);
+      afterimage.setDepth(-0.5);
+      afterimage.setVisible(false);
+      this.afterimages.push(afterimage);
+    }
   }
 
   get x() {
@@ -111,6 +125,9 @@ export class Player {
     this.dashUntil = now + PLAYER.dashDurationMs;
     this.invulnerableUntil = now + PLAYER.dashInvulnerabilityMs;
     this.velocity.copy(direction.normalize().scale(PLAYER.dashSpeed));
+    this.dashWake.setRotation(direction.angle());
+    this.dashWake.setVisible(true);
+    this.dashWake.setAlpha(0.45);
     this.scene.tweens.add({
       targets: this.body,
       scaleX: 1.25,
@@ -118,6 +135,18 @@ export class Player {
       duration: 80,
       yoyo: true,
       ease: "Quad.easeOut"
+    });
+    this.scene.tweens.add({
+      targets: this.dashWake,
+      scaleX: 1.7,
+      scaleY: 0.55,
+      alpha: 0,
+      duration: PLAYER.dashDurationMs,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        this.dashWake.setVisible(false);
+        this.dashWake.setScale(1);
+      }
     });
 
     return true;
@@ -210,6 +239,7 @@ export class Player {
 
     this.container.x += this.velocity.x * deltaSeconds;
     this.container.y += this.velocity.y * deltaSeconds;
+    this.spawnDashAfterimage();
   }
 
   private updateAim(x: number, y: number) {
@@ -225,5 +255,28 @@ export class Player {
     const alpha = this.isInvulnerable ? 0.52 : 1;
     this.body.setAlpha(alpha);
     this.aim.setAlpha(this.kind === "human" ? 0.9 : 0.38);
+  }
+
+  private spawnDashAfterimage() {
+    if (!this.isDashing || this.scene.time.now < this.nextAfterimageAt) {
+      return;
+    }
+
+    this.nextAfterimageAt = this.scene.time.now + 28;
+    const afterimage = this.afterimages[this.afterimageIndex];
+    afterimage.setPosition(this.x, this.y);
+    afterimage.setFillStyle(this.color, this.kind === "human" ? 0.28 : 0.16);
+    afterimage.setScale(1);
+    afterimage.setAlpha(this.kind === "human" ? 0.28 : 0.16);
+    afterimage.setVisible(true);
+    this.scene.tweens.killTweensOf(afterimage);
+    this.scene.tweens.add({
+      targets: afterimage,
+      scale: 1.6,
+      alpha: 0,
+      duration: 160,
+      ease: "Quad.easeOut"
+    });
+    this.afterimageIndex = (this.afterimageIndex + 1) % this.afterimages.length;
   }
 }
