@@ -11,6 +11,7 @@ export const ARENA = {
 
 export const PLAYER = {
   radius: 18,
+  maxLives: 3,
   acceleration: 1500,
   drag: 0.84,
   maxSpeed: 320,
@@ -43,6 +44,20 @@ export const BOT = {
   interceptRadius: 130,
   throwRange: 760,
   throwDelayMs: 420
+} as const;
+
+export const WEAPON = {
+  pickupRadius: 15,
+  spawnEveryMs: 7200,
+  firstSpawnDelayMs: 3600,
+  maxPickups: 2,
+  shotSpeed: 780,
+  shotRadius: 6,
+  shotLifetimeMs: 900,
+  shotCooldownMs: 850,
+  pickupDetectRadius: 46,
+  botSeekRadius: 440,
+  botShootRange: 620
 } as const;
 
 export const ROUND_STAGES = [
