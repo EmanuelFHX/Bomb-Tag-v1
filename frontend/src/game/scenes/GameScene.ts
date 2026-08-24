@@ -136,6 +136,8 @@ export class GameScene extends Phaser.Scene {
   private weaponPickups: WeaponPickup[] = [];
   private shots: Shot[] = [];
   private nextWeaponSpawnAt = 0;
+  private baseBombSpeedMultiplier = 1;
+  private specialBombSpeedBonus = 0;
   private specialRoundLivesRestored = false;
 
   constructor() {
@@ -310,11 +312,25 @@ export class GameScene extends Phaser.Scene {
 
   private handleHumanAction() {
     if (this.bomb.state === "HELD" && this.bomb.owner === this.human) {
-      this.bomb.launch(this.human.aimDirection.clone());
+      this.launchBomb(this.human.aimDirection.clone());
       return;
     }
 
     this.fireWeapon(this.human, this.human.aimDirection.clone());
+  }
+
+  private launchBomb(direction: Phaser.Math.Vector2) {
+    const launched = this.bomb.launch(direction);
+    if (!launched || this.getAlivePlayers().length > 3) {
+      return launched;
+    }
+
+    this.specialBombSpeedBonus = Math.min(
+      BOMB.specialThrowSpeedMaxBonus,
+      this.specialBombSpeedBonus + BOMB.specialThrowSpeedStep
+    );
+    this.bomb.setIntensity(this.baseBombSpeedMultiplier * (1 + this.specialBombSpeedBonus));
+    return launched;
   }
 
   private updateWeapons() {
@@ -575,7 +591,7 @@ export class GameScene extends Phaser.Scene {
     const timeLeft = this.roundEndsAt - this.time.now;
 
     if ((distanceToTarget < BOT.throwRange && this.time.now >= readyAt) || timeLeft < 3500) {
-      this.bomb.launch(owner.aimDirection.clone());
+      this.launchBomb(owner.aimDirection.clone());
       this.botThrowReadyAt.set(owner.id, this.time.now + BOT.throwDelayMs);
     }
   }
@@ -718,6 +734,8 @@ export class GameScene extends Phaser.Scene {
     this.hudTimer.setScale(1);
     this.audio.resetTimerTicks();
     this.clearWeaponsAndShots();
+    this.baseBombSpeedMultiplier = stage.bombSpeedMultiplier;
+    this.specialBombSpeedBonus = 0;
     this.createArena(alivePlayers.length);
     for (const player of alivePlayers) {
       player.configureDash(
@@ -734,7 +752,7 @@ export class GameScene extends Phaser.Scene {
     if (isSpecialRound) {
       this.specialRoundLivesRestored = true;
     }
-    this.bomb.setIntensity(stage.bombSpeedMultiplier);
+    this.bomb.setIntensity(this.baseBombSpeedMultiplier);
     this.transferBomb(nextOwner);
     this.updateHud(true);
     this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);

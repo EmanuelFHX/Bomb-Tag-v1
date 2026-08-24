@@ -33,7 +33,9 @@ export const BOMB = {
   returnTurnRate: 4.6,
   ownerCatchDistance: 34,
   transferCooldownMs: 180,
-  timerSeconds: 20
+  timerSeconds: 20,
+  specialThrowSpeedStep: 0.035,
+  specialThrowSpeedMaxBonus: 0.22
 } as const;
 
 export const BOT = {
