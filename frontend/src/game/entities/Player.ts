@@ -356,6 +356,40 @@ export class Player {
     this.container.setPosition(nextX, nextY);
   }
 
+  keepInsidePolygon(polygon: Phaser.Geom.Polygon, center: Phaser.Math.Vector2) {
+    if (Phaser.Geom.Polygon.Contains(polygon, this.x, this.y)) {
+      return;
+    }
+
+    const points = polygon.points as Phaser.Geom.Point[];
+    let closest = new Phaser.Math.Vector2(this.x, this.y);
+    let closestDistance = Number.POSITIVE_INFINITY;
+
+    for (let index = 0; index < points.length; index += 1) {
+      const start = points[index];
+      const end = points[(index + 1) % points.length];
+      const edge = new Phaser.Math.Vector2(end.x - start.x, end.y - start.y);
+      const toPlayer = new Phaser.Math.Vector2(this.x - start.x, this.y - start.y);
+      const edgeLengthSq = Math.max(edge.lengthSq(), 1);
+      const amount = Phaser.Math.Clamp(toPlayer.dot(edge) / edgeLengthSq, 0, 1);
+      const point = new Phaser.Math.Vector2(start.x + edge.x * amount, start.y + edge.y * amount);
+      const distance = Phaser.Math.Distance.Squared(this.x, this.y, point.x, point.y);
+
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closest = point;
+      }
+    }
+
+    const inward = center.clone().subtract(closest);
+    if (inward.lengthSq() > 0) {
+      closest.add(inward.normalize().scale(PLAYER.radius + 4));
+    }
+
+    this.velocity.scale(-0.25);
+    this.container.setPosition(closest.x, closest.y);
+  }
+
   private applyMovement(deltaSeconds: number, direction: Phaser.Math.Vector2, maxSpeed: number) {
     if (direction.lengthSq() > 0) {
       const acceleration = direction.clone().normalize().scale(PLAYER.acceleration * deltaSeconds);
