@@ -154,6 +154,7 @@ export class GameScene extends Phaser.Scene {
   private specialBombSpeedBonus = 0;
   private specialRoundLivesRestored = false;
   private finalBattleMusic?: HTMLAudioElement;
+  private finalBattleMusicPrimed = false;
 
   constructor() {
     super("GameScene");
@@ -172,11 +173,15 @@ export class GameScene extends Phaser.Scene {
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.audio.unlock();
+      this.primeFinalBattleMusic();
       if (pointer.leftButtonDown() && !this.roundResolving && !this.matchOver) {
         this.handleHumanAction();
       }
     });
-    this.input.keyboard?.on("keydown", () => this.audio.unlock());
+    this.input.keyboard?.on("keydown", () => {
+      this.audio.unlock();
+      this.primeFinalBattleMusic();
+    });
     this.events.once("shutdown", () => this.finalBattleMusic?.pause());
   }
 
@@ -351,14 +356,46 @@ export class GameScene extends Phaser.Scene {
   }
 
   private startFinalBattleMusic() {
+    const music = this.getFinalBattleMusic();
+    this.finalBattleMusicPrimed = true;
+    music.muted = false;
+    music.volume = 0.9;
+    music.currentTime = 42;
+    void music.play().catch(() => {
+      const resume = () => {
+        music.muted = false;
+        music.volume = 0.9;
+        music.currentTime = 42;
+        void music.play();
+      };
+      this.input.once("pointerdown", resume);
+      this.input.keyboard?.once("keydown", resume);
+    });
+  }
+
+  private primeFinalBattleMusic() {
+    if (this.finalBattleMusicPrimed) {
+      return;
+    }
+
+    const music = this.getFinalBattleMusic();
+    music.muted = true;
+    music.volume = 0;
+    music.currentTime = 42;
+    void music.play().then(() => {
+      this.finalBattleMusicPrimed = true;
+    }).catch(() => {
+      music.muted = false;
+      music.volume = 0.9;
+    });
+  }
+
+  private getFinalBattleMusic() {
     this.finalBattleMusic ??= new Audio("/audio/final-battle.mp4");
     this.finalBattleMusic.loop = true;
-    this.finalBattleMusic.volume = 0.56;
-    this.finalBattleMusic.currentTime = 42;
-    void this.finalBattleMusic.play().catch(() => {
-      this.input.once("pointerdown", () => void this.finalBattleMusic?.play());
-      this.input.keyboard?.once("keydown", () => void this.finalBattleMusic?.play());
-    });
+    this.finalBattleMusic.preload = "auto";
+    this.finalBattleMusic.crossOrigin = "anonymous";
+    return this.finalBattleMusic;
   }
 
   private updateWeapons() {
@@ -525,6 +562,11 @@ export class GameScene extends Phaser.Scene {
     const alivePlayers = this.getAlivePlayers();
     if (alivePlayers.length <= 1) {
       this.time.delayedCall(1250, () => this.endMatch(alivePlayers[0]));
+      return;
+    }
+
+    if (alivePlayers.length === 3 && !this.specialRoundLivesRestored) {
+      this.time.delayedCall(260, () => this.playFinalRoundTransition(alivePlayers.length));
       return;
     }
 
@@ -725,6 +767,11 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (alivePlayers.length === 3 && !this.specialRoundLivesRestored) {
+      this.time.delayedCall(320, () => this.playFinalRoundTransition(alivePlayers.length));
+      return;
+    }
+
     this.time.delayedCall(this.isFinalPhase() ? 120 : 1350, () => {
       this.startRound(alivePlayers.length);
     });
@@ -819,24 +866,19 @@ export class GameScene extends Phaser.Scene {
     this.bomb.setIntensity(this.baseBombSpeedMultiplier);
     this.transferBomb(nextOwner);
     this.updateHud(true);
-    if (shouldRestoreSpecialLives) {
-      this.playFinalRoundCutscene(alivePlayers);
-    } else {
-      this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
+    this.cameras.main.flash(shouldRestoreSpecialLives ? 180 : 120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
+    if (!shouldRestoreSpecialLives) {
       this.showRoundMessage(roundMessage, alivePlayers.length <= 3 ? "#ffcf33" : "#f7f8ff", isSpecialRound ? 1700 : 1000);
     }
   }
 
-  private playFinalRoundCutscene(finalists: Player[]) {
+  private playFinalRoundTransition(aliveCount: number) {
     const dictionary = TEXT[this.language];
-    this.roundResolving = true;
-    this.roundEndsAt += 3000;
     this.startFinalBattleMusic();
-    this.playSpecialRoundIntro(finalists);
-
-    const overlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x070910, 0.72);
-    overlay.setDepth(13);
-    const title = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 118, dictionary.finalCutsceneTitle, {
+    const overlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 1);
+    overlay.setDepth(30);
+    overlay.setAlpha(0);
+    const title = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 128, dictionary.finalCutsceneTitle, {
       color: "#ffcf33",
       fontFamily: "ui-sans-serif, system-ui",
       fontSize: "64px",
@@ -845,7 +887,9 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 8
     });
     title.setOrigin(0.5);
-    title.setDepth(14);
+    title.setDepth(31);
+    title.setAlpha(0);
+    title.setScale(0.86);
 
     const ruleText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20, dictionary.finalCutsceneRules.join("\n"), {
       align: "center",
@@ -858,7 +902,8 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 5
     });
     ruleText.setOrigin(0.5);
-    ruleText.setDepth(14);
+    ruleText.setDepth(31);
+    ruleText.setAlpha(0);
 
     const startText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 138, "3", {
       color: "#86f7ff",
@@ -869,12 +914,37 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 7
     });
     startText.setOrigin(0.5);
-    startText.setDepth(14);
+    startText.setDepth(31);
+    startText.setAlpha(0);
+
+    this.tweens.add({
+      targets: overlay,
+      alpha: 1,
+      duration: 220,
+      ease: "Quad.easeOut"
+    });
+    this.tweens.add({
+      targets: title,
+      alpha: 1,
+      scale: 1,
+      delay: 240,
+      duration: 360,
+      ease: "Back.easeOut"
+    });
+    this.tweens.add({
+      targets: ruleText,
+      alpha: 1,
+      y: ruleText.y + 10,
+      delay: 560,
+      duration: 360,
+      ease: "Quad.easeOut"
+    });
 
     for (let index = 0; index < 3; index += 1) {
       this.time.delayedCall(index * 1000, () => {
         startText.setText(String(3 - index));
         startText.setScale(0.7);
+        startText.setAlpha(1);
         this.tweens.add({
           targets: startText,
           scale: 1.15,
@@ -896,112 +966,9 @@ export class GameScene extends Phaser.Scene {
         title.destroy();
         ruleText.destroy();
         startText.destroy();
-        this.roundResolving = false;
-        this.updateHud(true);
+        this.startRound(aliveCount);
       }
     });
-  }
-
-  private playSpecialRoundIntro(finalists: Player[]) {
-    this.cameras.main.flash(420, 255, 207, 51, false);
-    this.cameras.main.shake(260, 0.004);
-
-    const vignette = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x080a10, 0);
-    vignette.setDepth(6);
-    this.tweens.add({
-      targets: vignette,
-      alpha: 0.46,
-      duration: 180,
-      yoyo: true,
-      hold: 420,
-      ease: "Quad.easeOut",
-      onComplete: () => vignette.destroy()
-    });
-
-    const topLine = this.add.rectangle(this.arenaRect.centerX, this.arenaRect.top + 8, 0, 5, 0xffcf33, 0.95);
-    const bottomLine = this.add.rectangle(this.arenaRect.centerX, this.arenaRect.bottom - 8, 0, 5, 0xffcf33, 0.95);
-    const leftLine = this.add.rectangle(this.arenaRect.left + 8, this.arenaRect.centerY, 5, 0, 0xffcf33, 0.95);
-    const rightLine = this.add.rectangle(this.arenaRect.right - 8, this.arenaRect.centerY, 5, 0, 0xffcf33, 0.95);
-    const lines = [topLine, bottomLine, leftLine, rightLine];
-    for (const line of lines) {
-      line.setDepth(7);
-    }
-
-    this.tweens.add({
-      targets: [topLine, bottomLine],
-      width: this.arenaRect.width - 36,
-      duration: 460,
-      ease: "Cubic.easeOut"
-    });
-    this.tweens.add({
-      targets: [leftLine, rightLine],
-      height: this.arenaRect.height - 36,
-      duration: 460,
-      ease: "Cubic.easeOut"
-    });
-    this.tweens.add({
-      targets: lines,
-      alpha: 0,
-      delay: 960,
-      duration: 260,
-      ease: "Quad.easeIn",
-      onComplete: () => {
-        for (const line of lines) {
-          line.destroy();
-        }
-      }
-    });
-
-    for (const player of finalists) {
-      const halo = this.add.circle(player.x, player.y, PLAYER.radius + 18, player.color, 0);
-      halo.setStrokeStyle(4, player.color, 0.82);
-      halo.setDepth(6);
-      this.tweens.add({
-        targets: halo,
-        scale: 2.2,
-        alpha: 0,
-        duration: 740,
-        ease: "Quad.easeOut",
-        onComplete: () => halo.destroy()
-      });
-      this.tweens.add({
-        targets: player.container,
-        scale: 1.18,
-        duration: 130,
-        yoyo: true,
-        ease: "Back.easeOut"
-      });
-    }
-
-    for (let index = 0; index < 26; index += 1) {
-      const side = index % 4;
-      const x = side === 0
-        ? Phaser.Math.Between(this.arenaRect.left, this.arenaRect.right)
-        : side === 1
-          ? this.arenaRect.right
-          : side === 2
-            ? Phaser.Math.Between(this.arenaRect.left, this.arenaRect.right)
-            : this.arenaRect.left;
-      const y = side === 0
-        ? this.arenaRect.top
-        : side === 1
-          ? Phaser.Math.Between(this.arenaRect.top, this.arenaRect.bottom)
-          : side === 2
-            ? this.arenaRect.bottom
-            : Phaser.Math.Between(this.arenaRect.top, this.arenaRect.bottom);
-      const spark = this.add.rectangle(x, y, 12, 3, index % 3 === 0 ? 0x86f7ff : 0xffcf33, 0.9);
-      spark.setRotation(Phaser.Math.FloatBetween(-0.8, 0.8));
-      spark.setDepth(7);
-      this.tweens.add({
-        targets: spark,
-        x: this.arenaRect.centerX + (x - this.arenaRect.centerX) * 0.82,
-        y: this.arenaRect.centerY + (y - this.arenaRect.centerY) * 0.82,
-        alpha: 0,
-        duration: Phaser.Math.Between(520, 920),
-        ease: "Quad.easeOut",
-        onComplete: () => spark.destroy()
-      });
-    }
   }
 
   private endMatch(winner: Player) {
