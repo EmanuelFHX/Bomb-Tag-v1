@@ -117,7 +117,7 @@ export class Player {
     const now = this.scene.time.now;
     const charge = this.charges.find((item) => item.readyAt <= now);
 
-    if (!charge || direction.lengthSq() === 0 || !this.alive) {
+    if (!charge || direction.lengthSq() === 0 || !this.alive || this.isDashing) {
       return false;
     }
 
@@ -205,7 +205,11 @@ export class Player {
       this.tryDash(this.botDirection.clone());
     }
 
-    this.applyMovement(deltaSeconds, this.botDirection, BOT.maxSpeed);
+    if (this.isDashing) {
+      this.applyDashMovement(deltaSeconds);
+    } else {
+      this.applyMovement(deltaSeconds, this.botDirection, BOT.maxSpeed);
+    }
     this.updateVisualState();
   }
 
