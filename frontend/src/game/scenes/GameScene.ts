@@ -32,6 +32,12 @@ export class GameScene extends Phaser.Scene {
   private roundTimerSeconds: number = BOMB.timerSeconds;
   private roundResolving = false;
   private matchOver = false;
+  private nextHudUpdateAt = 0;
+  private lastTimerText = "";
+  private lastOwnerText = "";
+  private lastPlayersText = "";
+  private lastStageText = "";
+  private lastDashText = "";
 
   constructor() {
     super("GameScene");
@@ -63,7 +69,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (this.roundResolving) {
-      this.updateHud();
+      this.updateHud(false);
       return;
     }
 
@@ -91,7 +97,7 @@ export class GameScene extends Phaser.Scene {
     this.resolveBombHits();
     this.bomb.tryCatchOwner();
     this.resolveCountdown();
-    this.updateHud();
+    this.updateHud(false);
   }
 
   private createArena(aliveCount: number) {
@@ -178,6 +184,8 @@ export class GameScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(10)
       .setVisible(false);
+
+    this.updateHud(true);
   }
 
   private updateBotThrows() {
@@ -246,14 +254,25 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private updateHud() {
+  private updateHud(force: boolean) {
+    if (!force && this.time.now < this.nextHudUpdateAt) {
+      return;
+    }
+
+    this.nextHudUpdateAt = this.time.now + 80;
     const remaining = Math.max(0, (this.roundEndsAt - this.time.now) / 1000);
-    this.hudTimer.setText(`${remaining.toFixed(1)}s`);
-    this.hudOwner.setText(`BOMB: ${this.bomb.responsible.name}`);
+    const timerText = `${remaining.toFixed(1)}s`;
+    const ownerText = `BOMB: ${this.bomb.responsible.name}`;
     const aliveCount = this.getAlivePlayers().length;
-    this.hudPlayers.setText(`PLAYERS: ${aliveCount}`);
-    this.hudStage.setText(`STAGE: ${this.getStageName(aliveCount)}`);
-    this.hudDash.setText(`DASH: ${this.getDashText()}`);
+    const playersText = `PLAYERS: ${aliveCount}`;
+    const stageText = `STAGE: ${this.getStageName(aliveCount)}`;
+    const dashText = `DASH: ${this.getDashText()}`;
+
+    this.setTextIfChanged(this.hudTimer, "lastTimerText", timerText);
+    this.setTextIfChanged(this.hudOwner, "lastOwnerText", ownerText);
+    this.setTextIfChanged(this.hudPlayers, "lastPlayersText", playersText);
+    this.setTextIfChanged(this.hudStage, "lastStageText", stageText);
+    this.setTextIfChanged(this.hudDash, "lastDashText", dashText);
 
     const pulse = 1 + (1 - remaining / this.roundTimerSeconds) * 0.42;
     this.bomb.fuse.setScale(pulse);
@@ -282,6 +301,7 @@ export class GameScene extends Phaser.Scene {
     this.createArena(alivePlayers.length);
     this.bomb.setIntensity(stage.bombSpeedMultiplier);
     this.transferBomb(nextOwner);
+    this.updateHud(true);
     this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
     this.showRoundMessage(roundMessage, alivePlayers.length === 2 ? "#ffcf33" : "#f7f8ff", 820);
   }
@@ -368,5 +388,18 @@ export class GameScene extends Phaser.Scene {
       wall: 0x343946,
       grid: 0xffffff
     };
+  }
+
+  private setTextIfChanged(
+    target: Phaser.GameObjects.Text,
+    cacheKey: "lastTimerText" | "lastOwnerText" | "lastPlayersText" | "lastStageText" | "lastDashText",
+    value: string
+  ) {
+    if (this[cacheKey] === value) {
+      return;
+    }
+
+    this[cacheKey] = value;
+    target.setText(value);
   }
 }

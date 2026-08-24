@@ -4,9 +4,17 @@ import { GameScene } from "./game/scenes/GameScene";
 import "./ui/styles.css";
 
 const config: Phaser.Types.Core.GameConfig = {
-  type: Phaser.AUTO,
+  type: Phaser.CANVAS,
   parent: "app",
   backgroundColor: "#15171d",
+  fps: {
+    target: 60,
+    min: 30
+  },
+  render: {
+    antialias: false,
+    roundPixels: true
+  },
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
@@ -23,4 +31,3 @@ const config: Phaser.Types.Core.GameConfig = {
 };
 
 new Phaser.Game(config);
-
