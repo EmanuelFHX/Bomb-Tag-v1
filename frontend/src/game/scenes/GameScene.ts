@@ -69,6 +69,7 @@ const TEXT = {
     ],
     livesRestored: "LIVES RESTORED\n3 LIVES FOR EACH FINALIST",
     lifeLost: "-1 LIFE",
+    skipToFour: "4P",
     eliminated: (name: string) => `${name} ELIMINATED`,
     wins: (name: string) => `${name} WINS\nR TO REMATCH`,
     controls: "WASD move  |  Mouse aim  |  Left click throw/shoot  |  Shift/Space dash  |  R rematch",
@@ -97,6 +98,7 @@ const TEXT = {
     ],
     livesRestored: "VIDAS RESTAURADAS\n3 VIDAS PARA CADA FINALISTA",
     lifeLost: "-1 VIDA",
+    skipToFour: "4J",
     eliminated: (name: string) => `${name} ELIMINADO`,
     wins: (name: string) => `${name} VENCEU\nR PARA REVANCHE`,
     controls: "WASD mover  |  Mouse mirar  |  Clique esquerdo lancar/atirar  |  Shift/Espaco dash  |  R revanche",
@@ -121,6 +123,8 @@ export class GameScene extends Phaser.Scene {
   private helpText!: Phaser.GameObjects.Text;
   private languageButton!: Phaser.GameObjects.Container;
   private languageLabel!: Phaser.GameObjects.Text;
+  private skipButton!: Phaser.GameObjects.Container;
+  private skipButtonLabel!: Phaser.GameObjects.Text;
   private humanLifeHudPips: Phaser.GameObjects.Arc[] = [];
   private scoreboardPanel!: Phaser.GameObjects.Rectangle;
   private scoreboardTitle!: Phaser.GameObjects.Text;
@@ -328,6 +332,7 @@ export class GameScene extends Phaser.Scene {
       .setVisible(false);
 
     this.createLanguageButton();
+    this.createSkipButton();
     this.createScoreboard();
     this.updateHud(true);
   }
@@ -359,17 +364,31 @@ export class GameScene extends Phaser.Scene {
     const music = this.getFinalBattleMusic();
     this.finalBattleMusicPrimed = true;
     music.muted = false;
-    music.volume = 0.9;
+    music.volume = 0.04;
     music.currentTime = 42;
-    void music.play().catch(() => {
+    const fadeIn = () => this.fadeFinalBattleMusic(0.5, 3000);
+    void music.play().then(fadeIn).catch(() => {
       const resume = () => {
         music.muted = false;
-        music.volume = 0.9;
+        music.volume = 0.04;
         music.currentTime = 42;
-        void music.play();
+        void music.play().then(fadeIn);
       };
       this.input.once("pointerdown", resume);
       this.input.keyboard?.once("keydown", resume);
+    });
+  }
+
+  private fadeFinalBattleMusic(targetVolume: number, durationMs: number) {
+    const music = this.getFinalBattleMusic();
+    this.tweens.addCounter({
+      from: music.volume,
+      to: targetVolume,
+      duration: durationMs,
+      ease: "Sine.easeInOut",
+      onUpdate: (tween) => {
+        music.volume = tween.getValue() ?? targetVolume;
+      }
     });
   }
 
@@ -386,7 +405,7 @@ export class GameScene extends Phaser.Scene {
       this.finalBattleMusicPrimed = true;
     }).catch(() => {
       music.muted = false;
-      music.volume = 0.9;
+      music.volume = 0.5;
     });
   }
 
@@ -1258,6 +1277,25 @@ export class GameScene extends Phaser.Scene {
     this.languageButton.on("pointerdown", () => this.toggleLanguage());
   }
 
+  private createSkipButton() {
+    const background = this.add.rectangle(0, 0, 54, 34, 0x241719, 0.95);
+    background.setStrokeStyle(2, 0xffcf33, 0.46);
+
+    this.skipButtonLabel = this.add.text(0, -8, TEXT[this.language].skipToFour, {
+      color: "#ffcf33",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "14px",
+      fontStyle: "900"
+    });
+    this.skipButtonLabel.setOrigin(0.5, 0);
+
+    this.skipButton = this.add.container(GAME_WIDTH - 140, 34, [background, this.skipButtonLabel]);
+    this.skipButton.setDepth(20);
+    this.skipButton.setSize(54, 34);
+    this.skipButton.setInteractive({ useHandCursor: true });
+    this.skipButton.on("pointerdown", () => this.skipToFourPlayers());
+  }
+
   private toggleLanguage() {
     this.language = this.language === "en" ? "pt" : "en";
     this.human.label.setText(TEXT[this.language].humanName);
@@ -1266,11 +1304,31 @@ export class GameScene extends Phaser.Scene {
     this.lastStageText = "";
     this.lastDashReady = -1;
     this.lastDashSlots = -1;
+    this.skipButtonLabel.setText(TEXT[this.language].skipToFour);
     this.updateHud(true);
 
     if (this.roundMessage.visible && this.currentRoundMessageKey) {
       this.roundMessage.setText(this.getTranslatedActiveMessage());
     }
+  }
+
+  private skipToFourPlayers() {
+    if (this.matchOver || this.getAlivePlayers().length <= 4) {
+      return;
+    }
+
+    const removableBots = this.players.filter((player) => player.kind === "bot" && player.alive);
+    while (this.getAlivePlayers().length > 4 && removableBots.length > 0) {
+      const bot = removableBots.pop();
+      bot?.setEliminated();
+      bot?.setBombHolder(false);
+    }
+
+    this.roundResolving = false;
+    this.currentRoundMessageKey = "";
+    this.clearWeaponsAndShots();
+    this.bomb.setVisible(false);
+    this.startRound(this.getAlivePlayers().length);
   }
 
   private getTranslatedActiveMessage() {
