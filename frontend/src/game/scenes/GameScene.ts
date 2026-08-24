@@ -22,6 +22,47 @@ type BotIntent = {
   shouldDash: boolean;
 };
 
+type Language = "en" | "pt";
+
+const TEXT = {
+  en: {
+    humanName: "YOU",
+    bomb: "BOMB",
+    players: "PLAYERS",
+    stage: "STAGE",
+    dash: "DASH",
+    opening: "OPENING",
+    pressure: "PRESSURE",
+    panic: "PANIC",
+    special: "SPECIAL",
+    finalDuel: "FINAL DUEL",
+    playersRemain: (count: number) => `${count} PLAYERS REMAIN`,
+    threePlayers: "3 PLAYERS LEFT\nDASH RECHARGES OVER TIME",
+    eliminated: (name: string) => `${name} ELIMINATED`,
+    wins: (name: string) => `${name} WINS\nR TO REMATCH`,
+    controls: "WASD move  |  Mouse aim  |  Left click throw  |  Shift/Space dash  |  R rematch",
+    language: "EN"
+  },
+  pt: {
+    humanName: "VOCE",
+    bomb: "BOMBA",
+    players: "JOGADORES",
+    stage: "RODADA",
+    dash: "DASH",
+    opening: "INICIO",
+    pressure: "PRESSAO",
+    panic: "PANICO",
+    special: "ESPECIAL",
+    finalDuel: "DUELO FINAL",
+    playersRemain: (count: number) => `${count} JOGADORES RESTANTES`,
+    threePlayers: "3 JOGADORES RESTANTES\nDASH RECARREGA COM O TEMPO",
+    eliminated: (name: string) => `${name} ELIMINADO`,
+    wins: (name: string) => `${name} VENCEU\nR PARA REVANCHE`,
+    controls: "WASD mover  |  Mouse mirar  |  Clique esquerdo lancar  |  Shift/Espaco dash  |  R revanche",
+    language: "PT"
+  }
+} as const;
+
 export class GameScene extends Phaser.Scene {
   private inputSystem!: InputSystem;
   private players: Player[] = [];
@@ -34,9 +75,14 @@ export class GameScene extends Phaser.Scene {
   private hudOwner!: Phaser.GameObjects.Text;
   private hudStage!: Phaser.GameObjects.Text;
   private hudPlayers!: Phaser.GameObjects.Text;
+  private hudDashLabel!: Phaser.GameObjects.Text;
+  private helpText!: Phaser.GameObjects.Text;
+  private languageButton!: Phaser.GameObjects.Container;
+  private languageLabel!: Phaser.GameObjects.Text;
   private dashSlots: Phaser.GameObjects.Rectangle[] = [];
   private dashSlotFills: Phaser.GameObjects.Rectangle[] = [];
   private roundMessage!: Phaser.GameObjects.Text;
+  private currentRoundMessageKey: "playersRemain" | "threePlayers" | "finalDuel" | "matchOver" | "" = "";
   private roundEndsAt = 0;
   private roundTimerSeconds: number = BOMB.timerSeconds;
   private roundResolving = false;
@@ -47,6 +93,8 @@ export class GameScene extends Phaser.Scene {
   private lastPlayersText = "";
   private lastStageText = "";
   private lastDashReady = -1;
+  private language: Language = "en";
+  private winner?: Player;
   private botThrowReadyAt = new Map<string, number>();
 
   constructor() {
@@ -62,7 +110,7 @@ export class GameScene extends Phaser.Scene {
     this.createPlayers();
     this.bomb = new Bomb(this, this.human);
     this.createHud();
-    this.startRound("8 PLAYERS REMAIN");
+    this.startRound(BOT.count + 1);
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.audio.unlock();
@@ -137,7 +185,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createPlayers() {
-    this.human = new Player(this, "p1", "human", "YOU", 270, 360, PLAYER_COLORS[0]);
+    this.human = new Player(this, "p1", "human", TEXT[this.language].humanName, 270, 360, PLAYER_COLORS[0]);
     this.players.push(this.human);
 
     const botPositions = [
@@ -174,15 +222,15 @@ export class GameScene extends Phaser.Scene {
     });
     this.hudTimer.setData("tabular", true);
 
-    this.hudOwner = this.add.text(ARENA.x + 142, 28, "BOMB: YOU", baseStyle);
-    this.hudPlayers = this.add.text(ARENA.x + 320, 28, "PLAYERS: 8", baseStyle);
-    this.hudStage = this.add.text(ARENA.x + 470, 28, "STAGE: OPENING", baseStyle);
-    this.add.text(GAME_WIDTH - 252, 28, "DASH", baseStyle);
+    this.hudOwner = this.add.text(ARENA.x + 142, 28, "", baseStyle);
+    this.hudPlayers = this.add.text(ARENA.x + 320, 28, "", baseStyle);
+    this.hudStage = this.add.text(ARENA.x + 500, 28, "", baseStyle);
+    this.hudDashLabel = this.add.text(GAME_WIDTH - 332, 28, "", baseStyle);
     this.createDashHud();
-    this.add.text(
+    this.helpText = this.add.text(
       ARENA.x,
       GAME_HEIGHT - 34,
-      "WASD move  |  Mouse aim  |  Left click throw  |  Shift/Space dash  |  R rematch",
+      "",
       {
         color: "#b9bfcd",
         fontFamily: "ui-sans-serif, system-ui",
@@ -201,6 +249,7 @@ export class GameScene extends Phaser.Scene {
       .setDepth(10)
       .setVisible(false);
 
+    this.createLanguageButton();
     this.updateHud(true);
   }
 
@@ -277,7 +326,8 @@ export class GameScene extends Phaser.Scene {
     this.bomb.setVisible(false);
     this.roundResolving = true;
     this.cameras.main.shake(180, 0.008);
-    this.showRoundMessage(`${eliminated.name} ELIMINATED`, "#ff5d4f", 1100);
+    this.currentRoundMessageKey = "";
+    this.showRoundMessage(TEXT[this.language].eliminated(this.getPlayerName(eliminated)), "#ff5d4f", 1100);
 
     const alivePlayers = this.getAlivePlayers();
     if (alivePlayers.length <= 1) {
@@ -286,7 +336,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.time.delayedCall(1350, () => {
-      this.startRound(this.getRoundIntroText(alivePlayers.length));
+      this.startRound(alivePlayers.length);
     });
   }
 
@@ -298,15 +348,19 @@ export class GameScene extends Phaser.Scene {
     this.nextHudUpdateAt = this.time.now + 80;
     const remaining = Math.max(0, (this.roundEndsAt - this.time.now) / 1000);
     const timerText = `${remaining.toFixed(1)}s`;
-    const ownerText = `BOMB: ${this.bomb.responsible.name}`;
+    const dictionary = TEXT[this.language];
+    const ownerText = `${dictionary.bomb}: ${this.getPlayerName(this.bomb.responsible)}`;
     const aliveCount = this.getAlivePlayers().length;
-    const playersText = `PLAYERS: ${aliveCount}`;
-    const stageText = `STAGE: ${this.getStageName(aliveCount)}`;
+    const playersText = `${dictionary.players}: ${aliveCount}`;
+    const stageText = `${dictionary.stage}: ${this.getStageName(aliveCount)}`;
 
     this.setTextIfChanged(this.hudTimer, "lastTimerText", timerText);
     this.setTextIfChanged(this.hudOwner, "lastOwnerText", ownerText);
     this.setTextIfChanged(this.hudPlayers, "lastPlayersText", playersText);
     this.setTextIfChanged(this.hudStage, "lastStageText", stageText);
+    this.hudDashLabel.setText(dictionary.dash);
+    this.helpText.setText(dictionary.controls);
+    this.languageLabel.setText(dictionary.language);
     this.updateDashHud();
 
     const pulse = 1 + (1 - remaining / this.roundTimerSeconds) * 0.42;
@@ -320,16 +374,24 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private startRound(message: string) {
+  private startRound(aliveCountOrMessage: number | string) {
     const alivePlayers = this.getAlivePlayers();
     const stage = this.getRoundStage(alivePlayers.length);
     const nextOwner = Phaser.Utils.Array.GetRandom(alivePlayers);
     const isSpecialRound = alivePlayers.length === 3;
+    const message = typeof aliveCountOrMessage === "number"
+      ? TEXT[this.language].playersRemain(aliveCountOrMessage)
+      : aliveCountOrMessage;
     const roundMessage = alivePlayers.length === 2
-      ? "FINAL DUEL"
+      ? TEXT[this.language].finalDuel
       : isSpecialRound
-        ? "3 PLAYERS RESTANTES\nDASH RECARREGA COM O TEMPO"
+        ? TEXT[this.language].threePlayers
         : message;
+    this.currentRoundMessageKey = alivePlayers.length === 2
+      ? "finalDuel"
+      : isSpecialRound
+        ? "threePlayers"
+        : "playersRemain";
 
     this.roundResolving = false;
     this.roundTimerSeconds = stage.timerSeconds;
@@ -351,8 +413,10 @@ export class GameScene extends Phaser.Scene {
   private endMatch(winner: Player) {
     this.matchOver = true;
     this.roundResolving = true;
+    this.winner = winner;
+    this.currentRoundMessageKey = "matchOver";
     this.bomb.setVisible(false);
-    this.showRoundMessage(`${winner.name} WINS\nR TO REMATCH`, "#ffcf33", 999999);
+    this.showRoundMessage(TEXT[this.language].wins(this.getPlayerName(winner)), "#ffcf33", 999999);
   }
 
   private showRoundMessage(message: string, color: string, duration: number) {
@@ -390,15 +454,12 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getStageName(aliveCount: number) {
-    if (aliveCount <= 2) return "FINAL DUEL";
-    if (aliveCount === 3) return "SPECIAL";
-    if (aliveCount <= 4) return "PANIC";
-    if (aliveCount <= 6) return "PRESSURE";
-    return "OPENING";
-  }
-
-  private getRoundIntroText(aliveCount: number) {
-    return `${aliveCount} PLAYERS REMAIN`;
+    const dictionary = TEXT[this.language];
+    if (aliveCount <= 2) return dictionary.finalDuel;
+    if (aliveCount === 3) return dictionary.special;
+    if (aliveCount <= 4) return dictionary.panic;
+    if (aliveCount <= 6) return dictionary.pressure;
+    return dictionary.opening;
   }
 
   private getArenaPalette(aliveCount: number) {
@@ -461,7 +522,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createDashHud() {
-    const startX = GAME_WIDTH - 158;
+    const startX = GAME_WIDTH - 238;
     const y = 38;
 
     for (let index = 0; index < PLAYER.dashCharges; index += 1) {
@@ -475,6 +536,71 @@ export class GameScene extends Phaser.Scene {
       this.dashSlots.push(slot);
       this.dashSlotFills.push(fill);
     }
+  }
+
+  private createLanguageButton() {
+    const background = this.add.rectangle(0, 0, 82, 34, 0x171b24, 0.95);
+    background.setStrokeStyle(2, 0x8defff, 0.42);
+
+    const icon = this.add.graphics();
+    icon.lineStyle(1.6, 0x8defff, 0.86);
+    icon.strokeCircle(-22, 0, 9);
+    icon.lineBetween(-31, 0, -13, 0);
+    icon.strokeEllipse(-22, 0, 8, 18);
+    icon.strokeEllipse(-22, 0, 18, 7);
+
+    this.languageLabel = this.add.text(-3, -8, TEXT[this.language].language, {
+      color: "#f7f8ff",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "14px",
+      fontStyle: "800"
+    });
+
+    this.languageButton = this.add.container(GAME_WIDTH - 62, 34, [background, icon, this.languageLabel]);
+    this.languageButton.setDepth(20);
+    this.languageButton.setSize(82, 34);
+    this.languageButton.setInteractive({ useHandCursor: true });
+    this.languageButton.on("pointerdown", () => this.toggleLanguage());
+  }
+
+  private toggleLanguage() {
+    this.language = this.language === "en" ? "pt" : "en";
+    this.human.label.setText(TEXT[this.language].humanName);
+    this.lastOwnerText = "";
+    this.lastPlayersText = "";
+    this.lastStageText = "";
+    this.lastDashReady = -1;
+    this.updateHud(true);
+
+    if (this.roundMessage.visible && this.currentRoundMessageKey) {
+      this.roundMessage.setText(this.getTranslatedActiveMessage());
+    }
+  }
+
+  private getTranslatedActiveMessage() {
+    const aliveCount = this.getAlivePlayers().length;
+
+    if (this.currentRoundMessageKey === "matchOver" && this.winner) {
+      return TEXT[this.language].wins(this.getPlayerName(this.winner));
+    }
+
+    if (this.currentRoundMessageKey === "threePlayers") {
+      return TEXT[this.language].threePlayers;
+    }
+
+    if (this.currentRoundMessageKey === "finalDuel") {
+      return TEXT[this.language].finalDuel;
+    }
+
+    if (this.currentRoundMessageKey === "playersRemain") {
+      return TEXT[this.language].playersRemain(aliveCount);
+    }
+
+    return this.roundMessage.text;
+  }
+
+  private getPlayerName(player: Player) {
+    return player === this.human ? TEXT[this.language].humanName : player.name;
   }
 
   private updateDashHud() {
