@@ -163,6 +163,11 @@ export class Player {
     this.updateWeaponBadge();
   }
 
+  restoreLives() {
+    this.lives = PLAYER.maxLives;
+    this.updateLifePips();
+  }
+
   takeShotDamage() {
     if (!this.alive || this.isInvulnerable) {
       return false;

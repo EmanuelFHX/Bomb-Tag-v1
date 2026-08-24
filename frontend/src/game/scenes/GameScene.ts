@@ -116,6 +116,7 @@ export class GameScene extends Phaser.Scene {
   private weaponPickups: WeaponPickup[] = [];
   private shots: Shot[] = [];
   private nextWeaponSpawnAt = 0;
+  private specialRoundLivesRestored = false;
 
   constructor() {
     super("GameScene");
@@ -656,8 +657,14 @@ export class GameScene extends Phaser.Scene {
     for (const player of alivePlayers) {
       player.setDashRechargeEnabled(alivePlayers.length <= 3);
       player.resetDashCharges();
+      if (isSpecialRound && !this.specialRoundLivesRestored) {
+        player.restoreLives();
+      }
       player.clearWeapon();
       player.keepInside(this.arenaRect);
+    }
+    if (isSpecialRound) {
+      this.specialRoundLivesRestored = true;
     }
     this.bomb.setIntensity(stage.bombSpeedMultiplier);
     this.transferBomb(nextOwner);
