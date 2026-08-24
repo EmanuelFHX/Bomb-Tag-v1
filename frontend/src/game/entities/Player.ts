@@ -193,8 +193,8 @@ export class Player {
     this.updateLifePips();
   }
 
-  takeShotDamage() {
-    if (!this.alive || this.isInvulnerable) {
+  takeShotDamage(ignoreInvulnerability = false) {
+    if (!this.alive || (!ignoreInvulnerability && this.isInvulnerable)) {
       return false;
     }
 

@@ -32,6 +32,7 @@ export const BOMB = {
   maxTravelMs: 980,
   returnTurnRate: 4.6,
   ownerCatchDistance: 34,
+  specialMissCatchDistance: 46,
   transferCooldownMs: 180,
   timerSeconds: 20,
   specialThrowSpeedStep: 0.035,
