@@ -27,6 +27,7 @@ export class Player {
   private readonly charges: DashCharge[];
   private dashUntil = 0;
   private invulnerableUntil = 0;
+  private dashRechargeEnabled = true;
   private botDirection = new Phaser.Math.Vector2(1, 0);
   private nextBotDecisionAt = 0;
   private readonly afterimages: Phaser.GameObjects.Arc[] = [];
@@ -101,6 +102,16 @@ export class Player {
     return this.charges.filter((charge) => charge.readyAt <= now).length;
   }
 
+  setDashRechargeEnabled(isEnabled: boolean) {
+    this.dashRechargeEnabled = isEnabled;
+  }
+
+  resetDashCharges() {
+    for (const charge of this.charges) {
+      charge.readyAt = 0;
+    }
+  }
+
   setBombHolder(isHolder: boolean) {
     this.bombHalo.setVisible(isHolder);
   }
@@ -121,7 +132,7 @@ export class Player {
       return false;
     }
 
-    charge.readyAt = now + PLAYER.dashCooldownMs;
+    charge.readyAt = this.dashRechargeEnabled ? now + PLAYER.dashCooldownMs : Number.POSITIVE_INFINITY;
     this.dashUntil = now + PLAYER.dashDurationMs;
     this.invulnerableUntil = now + PLAYER.dashInvulnerabilityMs;
     this.velocity.copy(direction.normalize().scale(PLAYER.dashSpeed));
