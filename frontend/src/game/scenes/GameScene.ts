@@ -364,17 +364,31 @@ export class GameScene extends Phaser.Scene {
     const music = this.getFinalBattleMusic();
     this.finalBattleMusicPrimed = true;
     music.muted = false;
-    music.volume = 0.9;
+    music.volume = 0.04;
     music.currentTime = 42;
-    void music.play().catch(() => {
+    const fadeIn = () => this.fadeFinalBattleMusic(0.5, 3000);
+    void music.play().then(fadeIn).catch(() => {
       const resume = () => {
         music.muted = false;
-        music.volume = 0.9;
+        music.volume = 0.04;
         music.currentTime = 42;
-        void music.play();
+        void music.play().then(fadeIn);
       };
       this.input.once("pointerdown", resume);
       this.input.keyboard?.once("keydown", resume);
+    });
+  }
+
+  private fadeFinalBattleMusic(targetVolume: number, durationMs: number) {
+    const music = this.getFinalBattleMusic();
+    this.tweens.addCounter({
+      from: music.volume,
+      to: targetVolume,
+      duration: durationMs,
+      ease: "Sine.easeInOut",
+      onUpdate: (tween) => {
+        music.volume = tween.getValue() ?? targetVolume;
+      }
     });
   }
 
@@ -391,7 +405,7 @@ export class GameScene extends Phaser.Scene {
       this.finalBattleMusicPrimed = true;
     }).catch(() => {
       music.muted = false;
-      music.volume = 0.9;
+      music.volume = 0.5;
     });
   }
 
