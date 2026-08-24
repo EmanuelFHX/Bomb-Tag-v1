@@ -81,6 +81,8 @@ export class GameScene extends Phaser.Scene {
   private languageLabel!: Phaser.GameObjects.Text;
   private dashSlots: Phaser.GameObjects.Rectangle[] = [];
   private dashSlotFills: Phaser.GameObjects.Rectangle[] = [];
+  private dangerOverlay!: Phaser.GameObjects.Rectangle;
+  private roundMessagePanel!: Phaser.GameObjects.Rectangle;
   private roundMessage!: Phaser.GameObjects.Text;
   private currentRoundMessageKey: "playersRemain" | "threePlayers" | "finalDuel" | "matchOver" | "" = "";
   private roundEndsAt = 0;
@@ -95,6 +97,7 @@ export class GameScene extends Phaser.Scene {
   private lastDashReady = -1;
   private language: Language = "en";
   private winner?: Player;
+  private nextCriticalPulseAt = 0;
   private botThrowReadyAt = new Map<string, number>();
 
   constructor() {
@@ -238,6 +241,14 @@ export class GameScene extends Phaser.Scene {
       }
     );
 
+    this.dangerOverlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0xff2f2f, 0);
+    this.dangerOverlay.setDepth(8);
+
+    this.roundMessagePanel = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 660, 136, 0x0c0f16, 0.82);
+    this.roundMessagePanel.setStrokeStyle(2, 0xffffff, 0.12);
+    this.roundMessagePanel.setDepth(9);
+    this.roundMessagePanel.setVisible(false);
+
     this.roundMessage = this.add
       .text(GAME_WIDTH / 2, GAME_HEIGHT / 2, "", {
         color: "#f7f8ff",
@@ -321,11 +332,14 @@ export class GameScene extends Phaser.Scene {
     }
 
     const eliminated = this.bomb.responsible;
+    const explosionX = eliminated.x;
+    const explosionY = eliminated.y;
     eliminated.setEliminated();
     eliminated.setBombHolder(false);
     this.bomb.setVisible(false);
     this.roundResolving = true;
     this.cameras.main.shake(180, 0.008);
+    this.playExplosion(explosionX, explosionY, eliminated.color);
     this.currentRoundMessageKey = "";
     this.showRoundMessage(TEXT[this.language].eliminated(this.getPlayerName(eliminated)), "#ff5d4f", 1100);
 
@@ -372,6 +386,8 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.hudTimer.setColor("#f7f8ff");
     }
+
+    this.updateCriticalTimerFeedback(remaining);
   }
 
   private startRound(aliveCountOrMessage: number | string) {
@@ -396,6 +412,9 @@ export class GameScene extends Phaser.Scene {
     this.roundResolving = false;
     this.roundTimerSeconds = stage.timerSeconds;
     this.roundEndsAt = this.time.now + stage.timerSeconds * 1000;
+    this.nextCriticalPulseAt = 0;
+    this.dangerOverlay.setAlpha(0);
+    this.hudTimer.setScale(1);
     this.audio.resetTimerTicks();
     this.createArena(alivePlayers.length);
     for (const player of alivePlayers) {
@@ -420,14 +439,19 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showRoundMessage(message: string, color: string, duration: number) {
+    const lines = message.split("\n").length;
+    this.roundMessagePanel.setSize(lines > 1 ? 760 : 620, lines > 1 ? 154 : 118);
+    this.roundMessagePanel.setAlpha(0.82);
+    this.roundMessagePanel.setVisible(true);
     this.roundMessage.setText(message);
     this.roundMessage.setColor(color);
     this.roundMessage.setAlpha(1);
     this.roundMessage.setScale(0.92);
     this.roundMessage.setVisible(true);
     this.tweens.killTweensOf(this.roundMessage);
+    this.tweens.killTweensOf(this.roundMessagePanel);
     this.tweens.add({
-      targets: this.roundMessage,
+      targets: [this.roundMessage, this.roundMessagePanel],
       scale: 1,
       duration: 120,
       ease: "Quad.easeOut"
@@ -435,12 +459,72 @@ export class GameScene extends Phaser.Scene {
 
     if (duration < 999999) {
       this.tweens.add({
-        targets: this.roundMessage,
+        targets: [this.roundMessage, this.roundMessagePanel],
         alpha: 0,
         delay: duration,
         duration: 260,
         ease: "Quad.easeIn",
-        onComplete: () => this.roundMessage.setVisible(false)
+        onComplete: () => {
+          this.roundMessage.setVisible(false);
+          this.roundMessagePanel.setVisible(false);
+        }
+      });
+    }
+  }
+
+  private playExplosion(x: number, y: number, color: number) {
+    const ring = this.add.circle(x, y, 18, 0xff5d4f, 0);
+    ring.setStrokeStyle(5, 0xffcf33, 0.9);
+    ring.setDepth(7);
+    this.tweens.add({
+      targets: ring,
+      scale: 4.2,
+      alpha: 0,
+      duration: 360,
+      ease: "Quad.easeOut",
+      onComplete: () => ring.destroy()
+    });
+
+    for (let index = 0; index < 18; index += 1) {
+      const angle = (Math.PI * 2 * index) / 18;
+      const distance = Phaser.Math.Between(34, 86);
+      const shard = this.add.rectangle(x, y, 10, 4, index % 3 === 0 ? 0xffcf33 : color, 0.95);
+      shard.setRotation(angle);
+      shard.setDepth(7);
+      this.tweens.add({
+        targets: shard,
+        x: x + Math.cos(angle) * distance,
+        y: y + Math.sin(angle) * distance,
+        scaleX: 0.15,
+        scaleY: 0.15,
+        alpha: 0,
+        duration: Phaser.Math.Between(220, 390),
+        ease: "Quad.easeOut",
+        onComplete: () => shard.destroy()
+      });
+    }
+  }
+
+  private updateCriticalTimerFeedback(remaining: number) {
+    if (this.roundResolving || this.matchOver || remaining >= 1 || remaining <= 0) {
+      this.dangerOverlay.setAlpha(0);
+      this.hudTimer.setScale(1);
+      return;
+    }
+
+    const pulse = 0.1 + Math.sin(this.time.now * 0.04) * 0.035;
+    this.dangerOverlay.setAlpha(pulse);
+    this.hudTimer.setScale(1.14);
+
+    if (this.time.now >= this.nextCriticalPulseAt) {
+      this.nextCriticalPulseAt = this.time.now + 170;
+      this.cameras.main.shake(70, 0.0025);
+      this.tweens.add({
+        targets: this.hudTimer,
+        scale: 1.28,
+        duration: 55,
+        yoyo: true,
+        ease: "Quad.easeOut"
       });
     }
   }
