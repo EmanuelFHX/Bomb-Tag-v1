@@ -105,7 +105,12 @@ export class Bomb {
     return true;
   }
 
-  update(deltaSeconds: number, arena: Phaser.Geom.Rectangle) {
+  update(
+    deltaSeconds: number,
+    arena: Phaser.Geom.Rectangle,
+    polygon?: Phaser.Geom.Polygon,
+    polygonCenter?: Phaser.Math.Vector2
+  ) {
     if (this.state === "HELD") {
       this.syncHeldPosition();
       return;
@@ -131,6 +136,9 @@ export class Bomb {
     this.directionRing.setPosition(this.shape.x, this.shape.y);
     this.spawnTrail();
     this.resolveWallBounce(arena);
+    if (polygon && polygonCenter) {
+      this.resolvePolygonBounce(polygon, polygonCenter);
+    }
   }
 
   playTransferBurst(isSpecial: boolean) {
@@ -248,6 +256,62 @@ export class Bomb {
         }
       });
     }
+  }
+
+  private resolvePolygonBounce(polygon: Phaser.Geom.Polygon, center: Phaser.Math.Vector2) {
+    if (Phaser.Geom.Polygon.Contains(polygon, this.shape.x, this.shape.y)) {
+      return;
+    }
+
+    const points = polygon.points as Phaser.Geom.Point[];
+    let closest = new Phaser.Math.Vector2(this.shape.x, this.shape.y);
+    let closestDistance = Number.POSITIVE_INFINITY;
+
+    for (let index = 0; index < points.length; index += 1) {
+      const start = points[index];
+      const end = points[(index + 1) % points.length];
+      const edge = new Phaser.Math.Vector2(end.x - start.x, end.y - start.y);
+      const toBomb = new Phaser.Math.Vector2(this.shape.x - start.x, this.shape.y - start.y);
+      const edgeLengthSq = Math.max(edge.lengthSq(), 1);
+      const amount = Phaser.Math.Clamp(toBomb.dot(edge) / edgeLengthSq, 0, 1);
+      const point = new Phaser.Math.Vector2(start.x + edge.x * amount, start.y + edge.y * amount);
+      const distance = Phaser.Math.Distance.Squared(this.shape.x, this.shape.y, point.x, point.y);
+
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closest = point;
+      }
+    }
+
+    const inward = center.clone().subtract(closest);
+    if (inward.lengthSq() === 0) {
+      return;
+    }
+
+    inward.normalize();
+    closest.add(inward.clone().scale(BOMB.radius + 4));
+    this.shape.setPosition(closest.x, closest.y);
+    this.fuse.setPosition(this.shape.x, this.shape.y);
+    this.directionRing.setPosition(this.shape.x, this.shape.y);
+
+    const dot = this.velocity.dot(inward);
+    if (dot < 0) {
+      this.velocity.subtract(inward.scale(2 * dot));
+    }
+
+    this.ricochets += 1;
+    this.scene.tweens.add({
+      targets: this.directionRing,
+      scale: 1.45,
+      alpha: 0.7,
+      duration: 70,
+      yoyo: true,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        this.directionRing.setScale(1);
+        this.applyVisualState();
+      }
+    });
   }
 
   private applyVisualState() {

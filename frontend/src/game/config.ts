@@ -54,9 +54,11 @@ export const BOT = {
 export const WEAPON = {
   pickupRadius: 15,
   spawnEveryMs: 8600,
+  specialSpawnEveryMs: 4200,
   firstSpawnDelayMs: 5200,
+  specialFirstSpawnDelayMs: 1400,
   maxPickupsNormal: 1,
-  maxPickupsSpecial: 2,
+  maxPickupsSpecial: 3,
   shotSpeed: 720,
   shotRadius: 6,
   shotLifetimeMs: 880,

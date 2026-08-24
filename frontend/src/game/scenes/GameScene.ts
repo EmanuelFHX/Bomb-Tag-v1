@@ -64,7 +64,7 @@ const TEXT = {
     finalCutsceneRules: [
       "3 lives restored",
       "2 recharging dashes",
-      "+0.5s on every bomb pass",
+      "+0.5s on 3 players, +1s on final duel",
       "miss the returning catch: -1 life"
     ],
     livesRestored: "LIVES RESTORED\n3 LIVES FOR EACH FINALIST",
@@ -93,7 +93,7 @@ const TEXT = {
     finalCutsceneRules: [
       "3 vidas restauradas",
       "2 dashes recarregaveis",
-      "+0,5s a cada passe da bomba",
+      "+0,5s com 3 players, +1s no duelo final",
       "errou a pegada do retorno: -1 vida"
     ],
     livesRestored: "VIDAS RESTAURADAS\n3 VIDAS PARA CADA FINALISTA",
@@ -113,6 +113,8 @@ export class GameScene extends Phaser.Scene {
   private bomb!: Bomb;
   private audio!: AudioSystem;
   private arenaRect!: Phaser.Geom.Rectangle;
+  private arenaPolygon?: Phaser.Geom.Polygon;
+  private arenaPolygonCenter = new Phaser.Math.Vector2();
   private graphics!: Phaser.GameObjects.Graphics;
   private hudTimer!: Phaser.GameObjects.Text;
   private hudOwner!: Phaser.GameObjects.Text;
@@ -134,6 +136,11 @@ export class GameScene extends Phaser.Scene {
   private dangerOverlay!: Phaser.GameObjects.Rectangle;
   private roundMessagePanel!: Phaser.GameObjects.Rectangle;
   private roundMessage!: Phaser.GameObjects.Text;
+  private homingIndicator?: {
+    target: Player;
+    graphics: Phaser.GameObjects.Graphics;
+    expiresAt: number;
+  };
   private currentRoundMessageKey: "playersRemain" | "threePlayers" | "livesRestored" | "finalDuel" | "matchOver" | "" = "";
   private roundEndsAt = 0;
   private roundTimerSeconds: number = BOMB.timerSeconds;
@@ -157,6 +164,8 @@ export class GameScene extends Phaser.Scene {
   private baseBombSpeedMultiplier = 1;
   private specialBombSpeedBonus = 0;
   private specialRoundLivesRestored = false;
+  private matchMusic?: HTMLAudioElement;
+  private matchMusicStarted = false;
   private finalBattleMusic?: HTMLAudioElement;
   private finalBattleMusicPrimed = false;
 
@@ -177,6 +186,7 @@ export class GameScene extends Phaser.Scene {
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.audio.unlock();
+      this.startMatchMusic();
       this.primeFinalBattleMusic();
       if (pointer.leftButtonDown() && !this.roundResolving && !this.matchOver) {
         this.handleHumanAction();
@@ -184,9 +194,13 @@ export class GameScene extends Phaser.Scene {
     });
     this.input.keyboard?.on("keydown", () => {
       this.audio.unlock();
+      this.startMatchMusic();
       this.primeFinalBattleMusic();
     });
-    this.events.once("shutdown", () => this.finalBattleMusic?.pause());
+    this.events.once("shutdown", () => {
+      this.matchMusic?.pause();
+      this.finalBattleMusic?.pause();
+    });
   }
 
   update(_time: number, delta: number) {
@@ -220,13 +234,17 @@ export class GameScene extends Phaser.Scene {
         player.updateBot(deltaSeconds, intent.aimTarget, intent.moveDirection, intent.shouldDash);
       }
       player.keepInside(this.arenaRect);
+      if (this.arenaPolygon) {
+        player.keepInsidePolygon(this.arenaPolygon, this.arenaPolygonCenter);
+      }
     }
 
     this.updateBotThrows();
     this.updateWeapons();
     this.updateBotWeaponActions();
     this.updateShots(deltaSeconds);
-    this.bomb.update(deltaSeconds, this.arenaRect);
+    this.bomb.update(deltaSeconds, this.arenaRect, this.arenaPolygon, this.arenaPolygonCenter);
+    this.updateHomingIndicator();
     this.resolveBombHits();
     this.resolveSpecialCatchMiss();
     this.bomb.tryCatchOwner();
@@ -237,9 +255,15 @@ export class GameScene extends Phaser.Scene {
   private createArena(aliveCount: number) {
     const palette = this.getArenaPalette(aliveCount);
     this.arenaRect = this.getArenaBounds(aliveCount);
+    this.arenaPolygon = undefined;
     this.graphics.clear();
     this.graphics.fillStyle(palette.outer, 1);
     this.graphics.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+    if (aliveCount <= 3) {
+      this.drawOctagonArena(palette);
+      return;
+    }
 
     this.graphics.fillStyle(palette.floor, 1);
     this.graphics.fillRoundedRect(this.arenaRect.x, this.arenaRect.y, this.arenaRect.width, this.arenaRect.height, 8);
@@ -254,6 +278,17 @@ export class GameScene extends Phaser.Scene {
     for (let y = this.arenaRect.y + 80; y < this.arenaRect.bottom; y += 80) {
       this.graphics.lineBetween(this.arenaRect.x, y, this.arenaRect.right, y);
     }
+  }
+
+  private drawOctagonArena(palette: { outer: number; floor: number; wall: number; grid: number }) {
+    const points = this.getArenaOctagonPoints(this.arenaRect);
+    this.arenaPolygon = new Phaser.Geom.Polygon(points);
+    this.arenaPolygonCenter.set(this.arenaRect.centerX, this.arenaRect.centerY);
+    this.graphics.fillStyle(palette.floor, 1);
+    this.graphics.fillPoints(points, true, true);
+
+    this.graphics.lineStyle(ARENA.wallThickness, palette.wall, 1);
+    this.graphics.strokePoints(points, true, true);
   }
 
   private createPlayers() {
@@ -355,6 +390,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.bomb.setHomingTarget(homingTarget);
+    if (homingTarget) {
+      this.showHomingIndicator(homingTarget);
+    }
     if (!this.isFinalPhase()) {
       return launched;
     }
@@ -368,17 +406,18 @@ export class GameScene extends Phaser.Scene {
   }
 
   private startFinalBattleMusic() {
+    this.stopMatchMusic();
     const music = this.getFinalBattleMusic();
     this.finalBattleMusicPrimed = true;
     music.muted = false;
     music.volume = 0.04;
-    music.currentTime = 42;
-    const fadeIn = () => this.fadeFinalBattleMusic(0.2, 3000);
+    music.currentTime = 0;
+    const fadeIn = () => this.fadeMusic(music, 0.2, 3000);
     void music.play().then(fadeIn).catch(() => {
       const resume = () => {
         music.muted = false;
         music.volume = 0.04;
-        music.currentTime = 42;
+        music.currentTime = 0;
         void music.play().then(fadeIn);
       };
       this.input.once("pointerdown", resume);
@@ -386,8 +425,34 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private fadeFinalBattleMusic(targetVolume: number, durationMs: number) {
-    const music = this.getFinalBattleMusic();
+  private startMatchMusic() {
+    if (this.matchMusicStarted || this.isFinalPhase()) {
+      return;
+    }
+
+    const music = this.getMatchMusic();
+    this.matchMusicStarted = true;
+    music.muted = false;
+    music.volume = 0.04;
+    void music.play().then(() => this.fadeMusic(music, 0.2, 3000)).catch(() => {
+      this.matchMusicStarted = false;
+    });
+  }
+
+  private stopMatchMusic() {
+    const music = this.matchMusic;
+    if (!music || music.paused) {
+      return;
+    }
+
+    this.fadeMusic(music, 0, 600, () => {
+      music.pause();
+      music.currentTime = 0;
+      this.matchMusicStarted = false;
+    });
+  }
+
+  private fadeMusic(music: HTMLAudioElement, targetVolume: number, durationMs: number, onComplete?: () => void) {
     this.tweens.addCounter({
       from: music.volume,
       to: targetVolume,
@@ -395,7 +460,8 @@ export class GameScene extends Phaser.Scene {
       ease: "Sine.easeInOut",
       onUpdate: (tween) => {
         music.volume = tween.getValue() ?? targetVolume;
-      }
+      },
+      onComplete
     });
   }
 
@@ -407,7 +473,7 @@ export class GameScene extends Phaser.Scene {
     const music = this.getFinalBattleMusic();
     music.muted = true;
     music.volume = 0;
-    music.currentTime = 42;
+    music.currentTime = 0;
     void music.play().then(() => {
       this.finalBattleMusicPrimed = true;
     }).catch(() => {
@@ -417,20 +483,29 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getFinalBattleMusic() {
-    this.finalBattleMusic ??= new Audio("/audio/final-battle.mp4");
+    this.finalBattleMusic ??= new Audio("/audio/final-battle.mp3");
     this.finalBattleMusic.loop = true;
     this.finalBattleMusic.preload = "auto";
     this.finalBattleMusic.crossOrigin = "anonymous";
     return this.finalBattleMusic;
   }
 
+  private getMatchMusic() {
+    this.matchMusic ??= new Audio("/audio/match-theme.mp3");
+    this.matchMusic.loop = true;
+    this.matchMusic.preload = "auto";
+    this.matchMusic.crossOrigin = "anonymous";
+    return this.matchMusic;
+  }
+
   private updateWeapons() {
-    const maxPickups = this.getAlivePlayers().length <= 3 ? WEAPON.maxPickupsSpecial : WEAPON.maxPickupsNormal;
+    const isFinalPhase = this.isFinalPhase();
+    const maxPickups = isFinalPhase ? WEAPON.maxPickupsSpecial : WEAPON.maxPickupsNormal;
     if (this.time.now >= this.nextWeaponSpawnAt) {
       if (this.weaponPickups.length < maxPickups) {
         this.spawnWeaponPickup();
       }
-      this.nextWeaponSpawnAt = this.time.now + WEAPON.spawnEveryMs;
+      this.nextWeaponSpawnAt = this.time.now + (isFinalPhase ? WEAPON.specialSpawnEveryMs : WEAPON.spawnEveryMs);
     }
 
     for (const player of this.getAlivePlayers()) {
@@ -711,8 +786,9 @@ export class GameScene extends Phaser.Scene {
 
         this.transferBomb(player);
         if (this.isFinalPhase()) {
-          this.roundEndsAt += 500;
-          this.roundTimerSeconds += 0.5;
+          const bonusSeconds = this.getAlivePlayers().length <= 2 ? 1 : 0.5;
+          this.roundEndsAt += bonusSeconds * 1000;
+          this.roundTimerSeconds += bonusSeconds;
         }
         this.bomb.playTransferBurst(bombState === "RETURNING" || ricochets > 0 || remainingSeconds < 1);
         this.audio.playHit({
@@ -733,6 +809,7 @@ export class GameScene extends Phaser.Scene {
       player.setBombHolder(player === nextOwner);
     }
 
+    this.clearHomingIndicator();
     this.bomb.setOwner(nextOwner);
   }
 
@@ -762,6 +839,75 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.bomb.setOwner(owner);
+  }
+
+  private showHomingIndicator(target: Player) {
+    if (!this.homingIndicator) {
+      const graphics = this.add.graphics();
+      graphics.setDepth(7);
+      this.homingIndicator = {
+        target,
+        graphics,
+        expiresAt: 0
+      };
+    }
+
+    this.homingIndicator.target = target;
+    this.homingIndicator.expiresAt = this.time.now + 900;
+    this.homingIndicator.graphics.setAlpha(1);
+    this.homingIndicator.graphics.setVisible(true);
+    this.tweens.killTweensOf(this.homingIndicator.graphics);
+    this.tweens.add({
+      targets: this.homingIndicator.graphics,
+      alpha: 0,
+      delay: 620,
+      duration: 280,
+      ease: "Quad.easeIn"
+    });
+  }
+
+  private updateHomingIndicator() {
+    const indicator = this.homingIndicator;
+    if (!indicator) {
+      return;
+    }
+
+    const { graphics, target } = indicator;
+    graphics.clear();
+
+    if (this.time.now >= indicator.expiresAt || !target.alive || this.bomb.state === "HELD") {
+      graphics.setVisible(false);
+      return;
+    }
+
+    const progress = 1 - (indicator.expiresAt - this.time.now) / 900;
+    const pulse = Math.sin(progress * Math.PI * 5);
+    const radius = PLAYER.radius + 14 + pulse * 3;
+    const color = target === this.human ? 0xff5d4f : 0xffcf33;
+    const lineAlpha = target === this.human ? 0.52 : 0.3;
+
+    graphics.lineStyle(2, color, lineAlpha);
+    graphics.lineBetween(this.bomb.x, this.bomb.y, target.x, target.y);
+    graphics.lineStyle(3, color, 0.85);
+    graphics.strokeCircle(target.x, target.y, radius);
+    graphics.lineStyle(1, 0xffffff, 0.75);
+    graphics.strokeCircle(target.x, target.y, radius + 7);
+
+    const markerLength = 9;
+    graphics.lineStyle(3, color, 0.9);
+    graphics.lineBetween(target.x - radius - markerLength, target.y, target.x - radius + 2, target.y);
+    graphics.lineBetween(target.x + radius - 2, target.y, target.x + radius + markerLength, target.y);
+    graphics.lineBetween(target.x, target.y - radius - markerLength, target.x, target.y - radius + 2);
+    graphics.lineBetween(target.x, target.y + radius - 2, target.x, target.y + radius + markerLength);
+  }
+
+  private clearHomingIndicator() {
+    if (!this.homingIndicator) {
+      return;
+    }
+
+    this.homingIndicator.graphics.clear();
+    this.homingIndicator.graphics.setVisible(false);
   }
 
   private isFinalPhase() {
@@ -865,7 +1011,7 @@ export class GameScene extends Phaser.Scene {
     this.roundResolving = false;
     this.roundTimerSeconds = stage.timerSeconds;
     this.roundEndsAt = this.time.now + stage.timerSeconds * 1000;
-    this.nextWeaponSpawnAt = this.time.now + WEAPON.firstSpawnDelayMs;
+    this.nextWeaponSpawnAt = this.time.now + (isSpecialRound ? WEAPON.specialFirstSpawnDelayMs : WEAPON.firstSpawnDelayMs);
     this.nextCriticalPulseAt = 0;
     this.dangerOverlay.setAlpha(0);
     this.hudTimer.setScale(1);
@@ -1194,12 +1340,28 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getArenaBounds(aliveCount: number) {
-    const width = ARENA.width * (aliveCount <= 2 ? 0.68 : aliveCount <= 3 ? 0.86 : 1);
-    const height = ARENA.height * (aliveCount <= 2 ? 0.8 : aliveCount <= 3 ? 0.82 : 1);
+    const width = ARENA.width * (aliveCount <= 2 ? 0.68 : aliveCount <= 3 ? 0.86 : aliveCount <= 4 ? 0.92 : 1);
+    const height = ARENA.height * (aliveCount <= 2 ? 0.8 : aliveCount <= 3 ? 0.82 : aliveCount <= 4 ? 0.92 : 1);
     const x = ARENA.x + (ARENA.width - width) / 2;
     const y = ARENA.y + (ARENA.height - height) / 2;
 
     return new Phaser.Geom.Rectangle(x, y, width, height);
+  }
+
+  private getArenaOctagonPoints(rect: Phaser.Geom.Rectangle) {
+    const cutX = rect.width * 0.16;
+    const cutY = rect.height * 0.18;
+
+    return [
+      new Phaser.Geom.Point(rect.left + cutX, rect.top),
+      new Phaser.Geom.Point(rect.right - cutX, rect.top),
+      new Phaser.Geom.Point(rect.right, rect.top + cutY),
+      new Phaser.Geom.Point(rect.right, rect.bottom - cutY),
+      new Phaser.Geom.Point(rect.right - cutX, rect.bottom),
+      new Phaser.Geom.Point(rect.left + cutX, rect.bottom),
+      new Phaser.Geom.Point(rect.left, rect.bottom - cutY),
+      new Phaser.Geom.Point(rect.left, rect.top + cutY)
+    ];
   }
 
   private setTextIfChanged(
