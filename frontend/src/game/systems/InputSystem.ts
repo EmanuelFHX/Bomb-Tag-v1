@@ -1,8 +1,11 @@
 import Phaser from "phaser";
 
+type InputKey = "w" | "a" | "s" | "d" | "shift" | "space" | "r";
+
 export class InputSystem {
-  readonly keys: Record<"w" | "a" | "s" | "d" | "shift" | "space", Phaser.Input.Keyboard.Key>;
+  readonly keys: Record<InputKey, Phaser.Input.Keyboard.Key>;
   private wasDashDown = false;
+  private wasRestartDown = false;
 
   constructor(scene: Phaser.Scene) {
     if (!scene.input.keyboard) {
@@ -15,8 +18,9 @@ export class InputSystem {
       s: Phaser.Input.Keyboard.KeyCodes.S,
       d: Phaser.Input.Keyboard.KeyCodes.D,
       shift: Phaser.Input.Keyboard.KeyCodes.SHIFT,
-      space: Phaser.Input.Keyboard.KeyCodes.SPACE
-    }) as Record<"w" | "a" | "s" | "d" | "shift" | "space", Phaser.Input.Keyboard.Key>;
+      space: Phaser.Input.Keyboard.KeyCodes.SPACE,
+      r: Phaser.Input.Keyboard.KeyCodes.R
+    }) as Record<InputKey, Phaser.Input.Keyboard.Key>;
   }
 
   getMoveDirection() {
@@ -40,5 +44,11 @@ export class InputSystem {
     this.wasDashDown = isDown;
     return pressed;
   }
-}
 
+  consumeRestartPressed() {
+    const isDown = this.keys.r.isDown;
+    const pressed = isDown && !this.wasRestartDown;
+    this.wasRestartDown = isDown;
+    return pressed;
+  }
+}

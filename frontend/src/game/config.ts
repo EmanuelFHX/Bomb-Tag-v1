@@ -35,8 +35,30 @@ export const BOMB = {
 } as const;
 
 export const BOT = {
-  count: 5,
+  count: 7,
   maxSpeed: 170,
   directionChangeMs: 900
 } as const;
 
+export const ROUND_STAGES = [
+  {
+    minPlayers: 7,
+    timerSeconds: 10,
+    bombSpeedMultiplier: 1
+  },
+  {
+    minPlayers: 5,
+    timerSeconds: 8,
+    bombSpeedMultiplier: 1.2
+  },
+  {
+    minPlayers: 3,
+    timerSeconds: 6,
+    bombSpeedMultiplier: 1.5
+  },
+  {
+    minPlayers: 2,
+    timerSeconds: 4,
+    bombSpeedMultiplier: 2
+  }
+] as const;
