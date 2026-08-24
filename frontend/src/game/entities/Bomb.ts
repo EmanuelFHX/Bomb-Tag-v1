@@ -56,6 +56,9 @@ export class Bomb {
 
   setIntensity(speedMultiplier: number) {
     this.speedMultiplier = speedMultiplier;
+    const color = speedMultiplier >= 2 ? 0xff5d4f : speedMultiplier >= 1.5 ? 0xff8f3d : 0xffd240;
+    this.shape.setFillStyle(color, 1);
+    this.fuse.setStrokeStyle(2, color, speedMultiplier >= 1.5 ? 0.8 : 0.55);
   }
 
   launch(direction: Phaser.Math.Vector2) {

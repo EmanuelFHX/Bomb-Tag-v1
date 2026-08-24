@@ -24,6 +24,7 @@ export class GameScene extends Phaser.Scene {
   private graphics!: Phaser.GameObjects.Graphics;
   private hudTimer!: Phaser.GameObjects.Text;
   private hudOwner!: Phaser.GameObjects.Text;
+  private hudStage!: Phaser.GameObjects.Text;
   private hudDash!: Phaser.GameObjects.Text;
   private hudPlayers!: Phaser.GameObjects.Text;
   private roundMessage!: Phaser.GameObjects.Text;
@@ -40,7 +41,7 @@ export class GameScene extends Phaser.Scene {
     this.inputSystem = new InputSystem(this);
     this.arenaRect = new Phaser.Geom.Rectangle(ARENA.x, ARENA.y, ARENA.width, ARENA.height);
     this.graphics = this.add.graphics();
-    this.createArena();
+    this.createArena(BOT.count + 1);
     this.createPlayers();
     this.bomb = new Bomb(this, this.human);
     this.createHud();
@@ -93,18 +94,19 @@ export class GameScene extends Phaser.Scene {
     this.updateHud();
   }
 
-  private createArena() {
+  private createArena(aliveCount: number) {
+    const palette = this.getArenaPalette(aliveCount);
     this.graphics.clear();
-    this.graphics.fillStyle(0x1c2029, 1);
+    this.graphics.fillStyle(palette.outer, 1);
     this.graphics.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
-    this.graphics.fillStyle(0x11141b, 1);
+    this.graphics.fillStyle(palette.floor, 1);
     this.graphics.fillRoundedRect(ARENA.x, ARENA.y, ARENA.width, ARENA.height, 8);
 
-    this.graphics.lineStyle(ARENA.wallThickness, 0x343946, 1);
+    this.graphics.lineStyle(ARENA.wallThickness, palette.wall, 1);
     this.graphics.strokeRect(ARENA.x, ARENA.y, ARENA.width, ARENA.height);
 
-    this.graphics.lineStyle(1, 0xffffff, 0.06);
+    this.graphics.lineStyle(1, palette.grid, 0.08);
     for (let x = ARENA.x + 80; x < ARENA.x + ARENA.width; x += 80) {
       this.graphics.lineBetween(x, ARENA.y, x, ARENA.y + ARENA.height);
     }
@@ -153,6 +155,7 @@ export class GameScene extends Phaser.Scene {
 
     this.hudOwner = this.add.text(ARENA.x + 142, 28, "BOMB: YOU", baseStyle);
     this.hudPlayers = this.add.text(ARENA.x + 320, 28, "PLAYERS: 8", baseStyle);
+    this.hudStage = this.add.text(ARENA.x + 470, 28, "STAGE: OPENING", baseStyle);
     this.hudDash = this.add.text(GAME_WIDTH - 245, 28, "DASH: ◆ ◆", baseStyle);
     this.add.text(
       ARENA.x,
@@ -247,7 +250,9 @@ export class GameScene extends Phaser.Scene {
     const remaining = Math.max(0, (this.roundEndsAt - this.time.now) / 1000);
     this.hudTimer.setText(`${remaining.toFixed(1)}s`);
     this.hudOwner.setText(`BOMB: ${this.bomb.responsible.name}`);
-    this.hudPlayers.setText(`PLAYERS: ${this.getAlivePlayers().length}`);
+    const aliveCount = this.getAlivePlayers().length;
+    this.hudPlayers.setText(`PLAYERS: ${aliveCount}`);
+    this.hudStage.setText(`STAGE: ${this.getStageName(aliveCount)}`);
     this.hudDash.setText(`DASH: ${this.getDashText()}`);
 
     const pulse = 1 + (1 - remaining / this.roundTimerSeconds) * 0.42;
@@ -269,13 +274,16 @@ export class GameScene extends Phaser.Scene {
     const alivePlayers = this.getAlivePlayers();
     const stage = this.getRoundStage(alivePlayers.length);
     const nextOwner = Phaser.Utils.Array.GetRandom(alivePlayers);
+    const roundMessage = alivePlayers.length === 2 ? "FINAL DUEL" : message;
 
     this.roundResolving = false;
     this.roundTimerSeconds = stage.timerSeconds;
     this.roundEndsAt = this.time.now + stage.timerSeconds * 1000;
+    this.createArena(alivePlayers.length);
     this.bomb.setIntensity(stage.bombSpeedMultiplier);
     this.transferBomb(nextOwner);
-    this.showRoundMessage(message, alivePlayers.length === 2 ? "#ffcf33" : "#f7f8ff", 720);
+    this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
+    this.showRoundMessage(roundMessage, alivePlayers.length === 2 ? "#ffcf33" : "#f7f8ff", 820);
   }
 
   private endMatch(winner: Player) {
@@ -317,5 +325,48 @@ export class GameScene extends Phaser.Scene {
 
   private getRoundStage(aliveCount: number) {
     return ROUND_STAGES.find((stage) => aliveCount >= stage.minPlayers) ?? ROUND_STAGES[ROUND_STAGES.length - 1];
+  }
+
+  private getStageName(aliveCount: number) {
+    if (aliveCount <= 2) return "FINAL DUEL";
+    if (aliveCount <= 4) return "PANIC";
+    if (aliveCount <= 6) return "PRESSURE";
+    return "OPENING";
+  }
+
+  private getArenaPalette(aliveCount: number) {
+    if (aliveCount <= 2) {
+      return {
+        outer: 0x201317,
+        floor: 0x171014,
+        wall: 0x6b2832,
+        grid: 0xff766b
+      };
+    }
+
+    if (aliveCount <= 4) {
+      return {
+        outer: 0x211a13,
+        floor: 0x17130f,
+        wall: 0x5d3c22,
+        grid: 0xffb84d
+      };
+    }
+
+    if (aliveCount <= 6) {
+      return {
+        outer: 0x1a1824,
+        floor: 0x11121b,
+        wall: 0x41375f,
+        grid: 0xb68cff
+      };
+    }
+
+    return {
+      outer: 0x1c2029,
+      floor: 0x11141b,
+      wall: 0x343946,
+      grid: 0xffffff
+    };
   }
 }
