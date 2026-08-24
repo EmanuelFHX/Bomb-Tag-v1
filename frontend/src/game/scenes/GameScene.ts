@@ -755,7 +755,11 @@ export class GameScene extends Phaser.Scene {
     this.bomb.setIntensity(this.baseBombSpeedMultiplier);
     this.transferBomb(nextOwner);
     this.updateHud(true);
-    this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
+    if (shouldRestoreSpecialLives) {
+      this.playSpecialRoundIntro(alivePlayers);
+    } else {
+      this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
+    }
     this.showRoundMessage(roundMessage, alivePlayers.length <= 3 ? "#ffcf33" : "#f7f8ff", isSpecialRound ? 1700 : 1000);
     if (shouldRestoreSpecialLives) {
       this.time.delayedCall(1860, () => {
@@ -763,6 +767,108 @@ export class GameScene extends Phaser.Scene {
           this.currentRoundMessageKey = "livesRestored";
           this.showRoundMessage(TEXT[this.language].livesRestored, "#86f7ff", 1300);
         }
+      });
+    }
+  }
+
+  private playSpecialRoundIntro(finalists: Player[]) {
+    this.cameras.main.flash(420, 255, 207, 51, false);
+    this.cameras.main.shake(260, 0.004);
+
+    const vignette = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x080a10, 0);
+    vignette.setDepth(6);
+    this.tweens.add({
+      targets: vignette,
+      alpha: 0.46,
+      duration: 180,
+      yoyo: true,
+      hold: 420,
+      ease: "Quad.easeOut",
+      onComplete: () => vignette.destroy()
+    });
+
+    const topLine = this.add.rectangle(this.arenaRect.centerX, this.arenaRect.top + 8, 0, 5, 0xffcf33, 0.95);
+    const bottomLine = this.add.rectangle(this.arenaRect.centerX, this.arenaRect.bottom - 8, 0, 5, 0xffcf33, 0.95);
+    const leftLine = this.add.rectangle(this.arenaRect.left + 8, this.arenaRect.centerY, 5, 0, 0xffcf33, 0.95);
+    const rightLine = this.add.rectangle(this.arenaRect.right - 8, this.arenaRect.centerY, 5, 0, 0xffcf33, 0.95);
+    const lines = [topLine, bottomLine, leftLine, rightLine];
+    for (const line of lines) {
+      line.setDepth(7);
+    }
+
+    this.tweens.add({
+      targets: [topLine, bottomLine],
+      width: this.arenaRect.width - 36,
+      duration: 460,
+      ease: "Cubic.easeOut"
+    });
+    this.tweens.add({
+      targets: [leftLine, rightLine],
+      height: this.arenaRect.height - 36,
+      duration: 460,
+      ease: "Cubic.easeOut"
+    });
+    this.tweens.add({
+      targets: lines,
+      alpha: 0,
+      delay: 960,
+      duration: 260,
+      ease: "Quad.easeIn",
+      onComplete: () => {
+        for (const line of lines) {
+          line.destroy();
+        }
+      }
+    });
+
+    for (const player of finalists) {
+      const halo = this.add.circle(player.x, player.y, PLAYER.radius + 18, player.color, 0);
+      halo.setStrokeStyle(4, player.color, 0.82);
+      halo.setDepth(6);
+      this.tweens.add({
+        targets: halo,
+        scale: 2.2,
+        alpha: 0,
+        duration: 740,
+        ease: "Quad.easeOut",
+        onComplete: () => halo.destroy()
+      });
+      this.tweens.add({
+        targets: player.container,
+        scale: 1.18,
+        duration: 130,
+        yoyo: true,
+        ease: "Back.easeOut"
+      });
+    }
+
+    for (let index = 0; index < 26; index += 1) {
+      const side = index % 4;
+      const x = side === 0
+        ? Phaser.Math.Between(this.arenaRect.left, this.arenaRect.right)
+        : side === 1
+          ? this.arenaRect.right
+          : side === 2
+            ? Phaser.Math.Between(this.arenaRect.left, this.arenaRect.right)
+            : this.arenaRect.left;
+      const y = side === 0
+        ? this.arenaRect.top
+        : side === 1
+          ? Phaser.Math.Between(this.arenaRect.top, this.arenaRect.bottom)
+          : side === 2
+            ? this.arenaRect.bottom
+            : Phaser.Math.Between(this.arenaRect.top, this.arenaRect.bottom);
+      const spark = this.add.rectangle(x, y, 12, 3, index % 3 === 0 ? 0x86f7ff : 0xffcf33, 0.9);
+      spark.setRotation(Phaser.Math.FloatBetween(-0.8, 0.8));
+      spark.setDepth(7);
+      this.tweens.add({
+        targets: spark,
+        x: this.arenaRect.centerX + (x - this.arenaRect.centerX) * 0.82,
+        y: this.arenaRect.centerY + (y - this.arenaRect.centerY) * 0.82,
+        alpha: 0,
+        duration: Phaser.Math.Between(520, 920),
+        ease: "Quad.easeOut",
+        onComplete: () => spark.destroy()
       });
     }
   }
