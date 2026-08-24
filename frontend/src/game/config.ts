@@ -11,27 +11,27 @@ export const ARENA = {
 
 export const PLAYER = {
   radius: 18,
-  acceleration: 1400,
-  drag: 0.86,
-  maxSpeed: 310,
-  dashSpeed: 760,
-  dashDurationMs: 170,
+  acceleration: 1500,
+  drag: 0.84,
+  maxSpeed: 320,
+  dashSpeed: 840,
+  dashDurationMs: 180,
   dashInvulnerabilityMs: 150,
-  dashCooldownMs: 2400,
+  dashCooldownMs: 1800,
   dashCharges: 2
 } as const;
 
 export const BOMB = {
   radius: 12,
   heldOffset: 30,
-  speed: 570,
-  returnSpeed: 510,
+  speed: 620,
+  returnSpeed: 565,
   maxRicochetsBeforeReturn: 3,
-  maxTravelMs: 920,
-  returnTurnRate: 5.2,
+  maxTravelMs: 980,
+  returnTurnRate: 4.6,
   ownerCatchDistance: 34,
   transferCooldownMs: 180,
-  timerSeconds: 10
+  timerSeconds: 20
 } as const;
 
 export const BOT = {
@@ -48,22 +48,22 @@ export const BOT = {
 export const ROUND_STAGES = [
   {
     minPlayers: 7,
-    timerSeconds: 10,
+    timerSeconds: 20,
     bombSpeedMultiplier: 1
   },
   {
     minPlayers: 5,
-    timerSeconds: 8,
-    bombSpeedMultiplier: 1.2
+    timerSeconds: 18,
+    bombSpeedMultiplier: 1.18
   },
   {
     minPlayers: 3,
-    timerSeconds: 6,
-    bombSpeedMultiplier: 1.5
+    timerSeconds: 15,
+    bombSpeedMultiplier: 1.45
   },
   {
     minPlayers: 2,
-    timerSeconds: 4,
-    bombSpeedMultiplier: 2
+    timerSeconds: 12,
+    bombSpeedMultiplier: 1.85
   }
 ] as const;
