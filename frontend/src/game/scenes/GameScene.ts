@@ -286,7 +286,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.time.delayedCall(1350, () => {
-      this.startRound(`${alivePlayers.length} PLAYERS REMAIN`);
+      this.startRound(this.getRoundIntroText(alivePlayers.length));
     });
   }
 
@@ -324,7 +324,8 @@ export class GameScene extends Phaser.Scene {
     const alivePlayers = this.getAlivePlayers();
     const stage = this.getRoundStage(alivePlayers.length);
     const nextOwner = Phaser.Utils.Array.GetRandom(alivePlayers);
-    const roundMessage = alivePlayers.length === 2 ? "FINAL DUEL" : message;
+    const isSpecialRound = alivePlayers.length === 3;
+    const roundMessage = alivePlayers.length === 2 ? "FINAL DUEL" : isSpecialRound ? "3 PLAYERS RESTANTES" : message;
 
     this.roundResolving = false;
     this.roundTimerSeconds = stage.timerSeconds;
@@ -332,13 +333,15 @@ export class GameScene extends Phaser.Scene {
     this.audio.resetTimerTicks();
     this.createArena(alivePlayers.length);
     for (const player of alivePlayers) {
+      player.setDashRechargeEnabled(alivePlayers.length <= 3);
+      player.resetDashCharges();
       player.keepInside(this.arenaRect);
     }
     this.bomb.setIntensity(stage.bombSpeedMultiplier);
     this.transferBomb(nextOwner);
     this.updateHud(true);
     this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
-    this.showRoundMessage(roundMessage, alivePlayers.length === 2 ? "#ffcf33" : "#f7f8ff", 820);
+    this.showRoundMessage(roundMessage, alivePlayers.length <= 3 ? "#ffcf33" : "#f7f8ff", 1000);
   }
 
   private endMatch(winner: Player) {
@@ -384,9 +387,14 @@ export class GameScene extends Phaser.Scene {
 
   private getStageName(aliveCount: number) {
     if (aliveCount <= 2) return "FINAL DUEL";
+    if (aliveCount === 3) return "SPECIAL";
     if (aliveCount <= 4) return "PANIC";
     if (aliveCount <= 6) return "PRESSURE";
     return "OPENING";
+  }
+
+  private getRoundIntroText(aliveCount: number) {
+    return `${aliveCount} PLAYERS REMAIN`;
   }
 
   private getArenaPalette(aliveCount: number) {
