@@ -50,7 +50,7 @@ const TEXT = {
     special: "SPECIAL",
     finalDuel: "FINAL DUEL",
     playersRemain: (count: number) => `${count} PLAYERS REMAIN`,
-    threePlayers: "3 PLAYERS LEFT\nSPECIAL ROUND",
+    threePlayers: "3 PLAYERS LEFT\n2 RECHARGING DASHES",
     livesRestored: "LIVES RESTORED\n3 LIVES FOR EACH FINALIST",
     eliminated: (name: string) => `${name} ELIMINATED`,
     wins: (name: string) => `${name} WINS\nR TO REMATCH`,
@@ -69,7 +69,7 @@ const TEXT = {
     special: "ESPECIAL",
     finalDuel: "DUELO FINAL",
     playersRemain: (count: number) => `${count} JOGADORES RESTANTES`,
-    threePlayers: "3 JOGADORES RESTANTES\nRODADA ESPECIAL",
+    threePlayers: "3 JOGADORES RESTANTES\n2 DASHES RECARREGAVEIS",
     livesRestored: "VIDAS RESTAURADAS\n3 VIDAS PARA CADA FINALISTA",
     eliminated: (name: string) => `${name} ELIMINADO`,
     wins: (name: string) => `${name} VENCEU\nR PARA REVANCHE`,
@@ -110,6 +110,7 @@ export class GameScene extends Phaser.Scene {
   private lastPlayersText = "";
   private lastStageText = "";
   private lastDashReady = -1;
+  private lastDashSlots = -1;
   private language: Language = "en";
   private winner?: Player;
   private nextCriticalPulseAt = 0;
@@ -658,7 +659,10 @@ export class GameScene extends Phaser.Scene {
     this.clearWeaponsAndShots();
     this.createArena(alivePlayers.length);
     for (const player of alivePlayers) {
-      player.setDashRechargeEnabled(alivePlayers.length <= 3);
+      player.configureDash(
+        alivePlayers.length <= 3 ? PLAYER.specialDashCharges : PLAYER.normalDashCharges,
+        alivePlayers.length <= 3
+      );
       player.resetDashCharges();
       if (shouldRestoreSpecialLives) {
         player.restoreLives();
@@ -881,7 +885,7 @@ export class GameScene extends Phaser.Scene {
     const startX = GAME_WIDTH - 238;
     const y = 38;
 
-    for (let index = 0; index < PLAYER.dashCharges; index += 1) {
+    for (let index = 0; index < PLAYER.normalDashCharges; index += 1) {
       const x = startX + index * 48;
       const slot = this.add.rectangle(x, y, 34, 14, 0x222733, 1);
       slot.setStrokeStyle(2, 0x8defff, 0.45);
@@ -926,6 +930,7 @@ export class GameScene extends Phaser.Scene {
     this.lastPlayersText = "";
     this.lastStageText = "";
     this.lastDashReady = -1;
+    this.lastDashSlots = -1;
     this.updateHud(true);
 
     if (this.roundMessage.visible && this.currentRoundMessageKey) {
@@ -965,13 +970,21 @@ export class GameScene extends Phaser.Scene {
 
   private updateDashHud() {
     const ready = this.human.dashChargeCount;
-    if (ready === this.lastDashReady) {
+    const slots = this.human.dashSlotCount;
+    if (ready === this.lastDashReady && slots === this.lastDashSlots) {
       return;
     }
 
     this.lastDashReady = ready;
+    this.lastDashSlots = slots;
     for (let index = 0; index < this.dashSlotFills.length; index += 1) {
+      const isActive = index < slots;
       const isReady = index < ready;
+      this.dashSlots[index].setVisible(isActive);
+      this.dashSlotFills[index].setVisible(isActive);
+      if (!isActive) {
+        continue;
+      }
       this.dashSlotFills[index].setAlpha(isReady ? 0.95 : 0.16);
       this.dashSlotFills[index].setFillStyle(isReady ? 0x8defff : 0x56606f, 1);
       this.dashSlots[index].setStrokeStyle(2, isReady ? 0x8defff : 0x56606f, isReady ? 0.72 : 0.35);

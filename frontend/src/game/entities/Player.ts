@@ -29,6 +29,7 @@ export class Player {
   private readonly scene: Phaser.Scene;
   private readonly charges: DashCharge[];
   private readonly lifePips: Phaser.GameObjects.Arc[] = [];
+  private activeDashCharges: number = PLAYER.normalDashCharges;
   private dashUntil = 0;
   private invulnerableUntil = 0;
   private dashRechargeEnabled = true;
@@ -52,7 +53,7 @@ export class Player {
     this.kind = kind;
     this.name = name;
     this.color = color;
-    this.charges = Array.from({ length: PLAYER.dashCharges }, () => ({ readyAt: 0 }));
+    this.charges = Array.from({ length: PLAYER.normalDashCharges }, () => ({ readyAt: 0 }));
 
     this.bombHalo = scene.add.circle(0, 0, PLAYER.radius + 8, 0xffcf33, 0.18);
     this.bombHalo.setStrokeStyle(3, 0xffcf33, 0.75);
@@ -122,7 +123,16 @@ export class Player {
 
   get dashChargeCount() {
     const now = this.scene.time.now;
-    return this.charges.filter((charge) => charge.readyAt <= now).length;
+    return this.charges.slice(0, this.activeDashCharges).filter((charge) => charge.readyAt <= now).length;
+  }
+
+  get dashSlotCount() {
+    return this.activeDashCharges;
+  }
+
+  configureDash(maxCharges: number, isRechargeEnabled: boolean) {
+    this.activeDashCharges = Phaser.Math.Clamp(maxCharges, 1, this.charges.length);
+    this.dashRechargeEnabled = isRechargeEnabled;
   }
 
   setDashRechargeEnabled(isEnabled: boolean) {
@@ -130,8 +140,8 @@ export class Player {
   }
 
   resetDashCharges() {
-    for (const charge of this.charges) {
-      charge.readyAt = 0;
+    for (let index = 0; index < this.charges.length; index += 1) {
+      this.charges[index].readyAt = index < this.activeDashCharges ? 0 : Number.POSITIVE_INFINITY;
     }
   }
 
@@ -205,7 +215,7 @@ export class Player {
 
   tryDash(direction: Phaser.Math.Vector2) {
     const now = this.scene.time.now;
-    const charge = this.charges.find((item) => item.readyAt <= now);
+    const charge = this.charges.slice(0, this.activeDashCharges).find((item) => item.readyAt <= now);
 
     if (!charge || direction.lengthSq() === 0 || !this.alive || this.isDashing) {
       return false;
