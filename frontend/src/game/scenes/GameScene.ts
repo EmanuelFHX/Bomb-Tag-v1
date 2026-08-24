@@ -37,6 +37,14 @@ type Shot = {
   expiresAt: number;
 };
 
+type ScoreboardRow = {
+  container: Phaser.GameObjects.Container;
+  marker: Phaser.GameObjects.Rectangle;
+  name: Phaser.GameObjects.Text;
+  lives: Phaser.GameObjects.Arc[];
+  status: Phaser.GameObjects.Text;
+};
+
 const TEXT = {
   en: {
     humanName: "YOU",
@@ -44,6 +52,7 @@ const TEXT = {
     players: "PLAYERS",
     stage: "STAGE",
     dash: "DASH",
+    lives: "LIVES",
     opening: "OPENING",
     pressure: "PRESSURE",
     panic: "PANIC",
@@ -64,6 +73,7 @@ const TEXT = {
     players: "JOGADORES",
     stage: "RODADA",
     dash: "DASH",
+    lives: "VIDAS",
     opening: "INICIO",
     pressure: "PRESSAO",
     panic: "PANICO",
@@ -92,10 +102,15 @@ export class GameScene extends Phaser.Scene {
   private hudOwner!: Phaser.GameObjects.Text;
   private hudStage!: Phaser.GameObjects.Text;
   private hudPlayers!: Phaser.GameObjects.Text;
+  private hudLivesLabel!: Phaser.GameObjects.Text;
   private hudDashLabel!: Phaser.GameObjects.Text;
   private helpText!: Phaser.GameObjects.Text;
   private languageButton!: Phaser.GameObjects.Container;
   private languageLabel!: Phaser.GameObjects.Text;
+  private humanLifeHudPips: Phaser.GameObjects.Arc[] = [];
+  private scoreboardPanel!: Phaser.GameObjects.Rectangle;
+  private scoreboardTitle!: Phaser.GameObjects.Text;
+  private scoreboardRows: ScoreboardRow[] = [];
   private dashSlots: Phaser.GameObjects.Rectangle[] = [];
   private dashSlotFills: Phaser.GameObjects.Rectangle[] = [];
   private dangerOverlay!: Phaser.GameObjects.Rectangle;
@@ -254,6 +269,8 @@ export class GameScene extends Phaser.Scene {
     this.hudOwner = this.add.text(ARENA.x + 142, 28, "", baseStyle);
     this.hudPlayers = this.add.text(ARENA.x + 320, 28, "", baseStyle);
     this.hudStage = this.add.text(ARENA.x + 500, 28, "", baseStyle);
+    this.hudLivesLabel = this.add.text(ARENA.x + 690, 28, "", baseStyle);
+    this.createHumanLivesHud();
     this.hudDashLabel = this.add.text(GAME_WIDTH - 332, 28, "", baseStyle);
     this.createDashHud();
     this.helpText = this.add.text(
@@ -287,6 +304,7 @@ export class GameScene extends Phaser.Scene {
       .setVisible(false);
 
     this.createLanguageButton();
+    this.createScoreboard();
     this.updateHud(true);
   }
 
@@ -650,9 +668,12 @@ export class GameScene extends Phaser.Scene {
     this.setTextIfChanged(this.hudOwner, "lastOwnerText", ownerText);
     this.setTextIfChanged(this.hudPlayers, "lastPlayersText", playersText);
     this.setTextIfChanged(this.hudStage, "lastStageText", stageText);
+    this.hudLivesLabel.setText(`${dictionary.lives}:`);
     this.hudDashLabel.setText(dictionary.dash);
     this.helpText.setText(dictionary.controls);
     this.languageLabel.setText(dictionary.language);
+    this.updateHumanLivesHud();
+    this.updateScoreboard();
     this.updateDashHud();
 
     const pulse = 1 + (1 - remaining / this.roundTimerSeconds) * 0.42;
@@ -938,6 +959,57 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private createHumanLivesHud() {
+    const startX = ARENA.x + 765;
+    const y = 37;
+
+    for (let index = 0; index < PLAYER.maxLives; index += 1) {
+      const pip = this.add.circle(startX + index * 24, y, 9, 0xff5d4f, 1);
+      pip.setStrokeStyle(2, 0xffffff, 0.62);
+      pip.setDepth(5);
+      this.humanLifeHudPips.push(pip);
+    }
+  }
+
+  private createScoreboard() {
+    this.scoreboardPanel = this.add.rectangle(ARENA.x + 88, ARENA.y + 98, 150, 184, 0x0c0f16, 0.76);
+    this.scoreboardPanel.setStrokeStyle(2, 0xffffff, 0.1);
+    this.scoreboardPanel.setDepth(4);
+
+    this.scoreboardTitle = this.add.text(ARENA.x + 24, ARENA.y + 18, "", {
+      color: "#f7f8ff",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "13px",
+      fontStyle: "900"
+    });
+    this.scoreboardTitle.setDepth(5);
+
+    for (let index = 0; index < BOT.count + 1; index += 1) {
+      const y = ARENA.y + 43 + index * 19;
+      const marker = this.add.rectangle(0, 0, 8, 8, 0xffffff, 1);
+      const name = this.add.text(13, -7, "", {
+        color: "#f7f8ff",
+        fontFamily: "ui-sans-serif, system-ui",
+        fontSize: "11px",
+        fontStyle: "800"
+      });
+      const lives = Array.from({ length: PLAYER.maxLives }, (_, lifeIndex) => {
+        const pip = this.add.circle(78 + lifeIndex * 11, 0, 4, 0xff5d4f, 1);
+        pip.setStrokeStyle(1, 0xffffff, 0.35);
+        return pip;
+      });
+      const status = this.add.text(116, -7, "", {
+        color: "#86f7ff",
+        fontFamily: "ui-sans-serif, system-ui",
+        fontSize: "11px",
+        fontStyle: "900"
+      });
+      const container = this.add.container(ARENA.x + 25, y, [marker, name, ...lives, status]);
+      container.setDepth(5);
+      this.scoreboardRows.push({ container, marker, name, lives, status });
+    }
+  }
+
   private createLanguageButton() {
     const background = this.add.rectangle(0, 0, 82, 34, 0x171b24, 0.95);
     background.setStrokeStyle(2, 0x8defff, 0.42);
@@ -1028,6 +1100,49 @@ export class GameScene extends Phaser.Scene {
       this.dashSlotFills[index].setAlpha(isReady ? 0.95 : 0.16);
       this.dashSlotFills[index].setFillStyle(isReady ? 0x8defff : 0x56606f, 1);
       this.dashSlots[index].setStrokeStyle(2, isReady ? 0x8defff : 0x56606f, isReady ? 0.72 : 0.35);
+    }
+  }
+
+  private updateHumanLivesHud() {
+    for (let index = 0; index < this.humanLifeHudPips.length; index += 1) {
+      const isActive = index < this.human.lives && this.human.alive;
+      const color = isActive ? (this.human.lives <= 1 ? 0xffcf33 : 0xff5d4f) : 0x303643;
+      this.humanLifeHudPips[index].setFillStyle(color, isActive ? 1 : 0.85);
+      this.humanLifeHudPips[index].setAlpha(isActive ? 1 : 0.34);
+      this.humanLifeHudPips[index].setScale(isActive && this.human.lives <= 1 ? 1.15 : 1);
+      this.humanLifeHudPips[index].setStrokeStyle(2, isActive ? 0xffffff : 0x56606f, isActive ? 0.68 : 0.3);
+    }
+  }
+
+  private updateScoreboard() {
+    const alivePlayers = this.getAlivePlayers();
+    const dictionary = TEXT[this.language];
+    this.scoreboardTitle.setText(dictionary.lives);
+
+    for (let index = 0; index < this.scoreboardRows.length; index += 1) {
+      const row = this.scoreboardRows[index];
+      const player = alivePlayers[index];
+
+      if (!player) {
+        row.container.setVisible(false);
+        continue;
+      }
+
+      row.container.setVisible(true);
+      row.marker.setFillStyle(player.color, 1);
+      row.marker.setScale(player === this.human ? 1.25 : 1);
+      row.name.setText(this.getPlayerName(player));
+      row.name.setColor(player === this.human ? "#ffffff" : "#cfd5e5");
+
+      for (let lifeIndex = 0; lifeIndex < row.lives.length; lifeIndex += 1) {
+        const isActive = lifeIndex < player.lives;
+        row.lives[lifeIndex].setFillStyle(isActive ? 0xff5d4f : 0x303643, isActive ? 1 : 0.85);
+        row.lives[lifeIndex].setAlpha(isActive ? 1 : 0.35);
+      }
+
+      const isBombHolder = this.bomb.responsible === player;
+      row.status.setText(isBombHolder ? "B" : player.hasWeapon ? "W" : "");
+      row.status.setColor(isBombHolder ? "#ffcf33" : "#86f7ff");
     }
   }
 
