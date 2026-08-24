@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { ARENA, BOMB, BOT, GAME_HEIGHT, GAME_WIDTH, PLAYER, ROUND_STAGES } from "../config";
 import { Bomb } from "../entities/Bomb";
 import { Player } from "../entities/Player";
+import { AudioSystem } from "../systems/AudioSystem";
 import { InputSystem } from "../systems/InputSystem";
 
 const PLAYER_COLORS = [
@@ -26,6 +27,7 @@ export class GameScene extends Phaser.Scene {
   private players: Player[] = [];
   private human!: Player;
   private bomb!: Bomb;
+  private audio!: AudioSystem;
   private arenaRect!: Phaser.Geom.Rectangle;
   private graphics!: Phaser.GameObjects.Graphics;
   private hudTimer!: Phaser.GameObjects.Text;
@@ -52,6 +54,7 @@ export class GameScene extends Phaser.Scene {
 
   create() {
     this.inputSystem = new InputSystem(this);
+    this.audio = new AudioSystem();
     this.arenaRect = new Phaser.Geom.Rectangle(ARENA.x, ARENA.y, ARENA.width, ARENA.height);
     this.graphics = this.add.graphics();
     this.createArena(BOT.count + 1);
@@ -61,10 +64,12 @@ export class GameScene extends Phaser.Scene {
     this.startRound("8 PLAYERS REMAIN");
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      this.audio.unlock();
       if (pointer.leftButtonDown() && !this.roundResolving && !this.matchOver) {
         this.bomb.launch(this.human.aimDirection.clone());
       }
     });
+    this.input.keyboard?.on("keydown", () => this.audio.unlock());
   }
 
   update(_time: number, delta: number) {
@@ -229,7 +234,20 @@ export class GameScene extends Phaser.Scene {
 
       const distance = Phaser.Math.Distance.Between(this.bomb.x, this.bomb.y, player.x, player.y);
       if (distance <= BOMB.radius + PLAYER.radius) {
+        const previousOwner = this.bomb.responsible;
+        const bombState = this.bomb.state;
+        const ricochets = this.bomb.ricochets;
+        const remainingSeconds = Math.max(0, (this.roundEndsAt - this.time.now) / 1000);
+
         this.transferBomb(player);
+        this.audio.playHit({
+          nextOwner: player,
+          previousOwner,
+          bombState,
+          ricochets,
+          remainingSeconds,
+          human: this.human
+        });
         break;
       }
     }
@@ -241,7 +259,6 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.bomb.setOwner(nextOwner);
-    this.cameras.main.flash(80, 255, 210, 64, false);
   }
 
   private resolveCountdown() {
@@ -291,6 +308,7 @@ export class GameScene extends Phaser.Scene {
 
     const pulse = 1 + (1 - remaining / this.roundTimerSeconds) * 0.42;
     this.bomb.fuse.setScale(pulse);
+    this.audio.updateTimer(remaining, !this.roundResolving && !this.matchOver);
 
     if (remaining < 3) {
       this.hudTimer.setColor("#ff766b");
@@ -313,6 +331,7 @@ export class GameScene extends Phaser.Scene {
     this.roundResolving = false;
     this.roundTimerSeconds = stage.timerSeconds;
     this.roundEndsAt = this.time.now + stage.timerSeconds * 1000;
+    this.audio.resetTimerTicks();
     this.createArena(alivePlayers.length);
     this.bomb.setIntensity(stage.bombSpeedMultiplier);
     this.transferBomb(nextOwner);
