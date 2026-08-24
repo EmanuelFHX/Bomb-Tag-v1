@@ -37,7 +37,12 @@ export const BOMB = {
 export const BOT = {
   count: 7,
   maxSpeed: 170,
-  directionChangeMs: 900
+  directionChangeMs: 900,
+  evadeRadius: 105,
+  evadeLookAheadMs: 820,
+  interceptRadius: 130,
+  throwRange: 760,
+  throwDelayMs: 420
 } as const;
 
 export const ROUND_STAGES = [
