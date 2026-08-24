@@ -298,8 +298,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateWeapons() {
-    if (this.time.now >= this.nextWeaponSpawnAt && this.weaponPickups.length < WEAPON.maxPickups) {
-      this.spawnWeaponPickup();
+    const maxPickups = this.getAlivePlayers().length <= 3 ? WEAPON.maxPickupsSpecial : WEAPON.maxPickupsNormal;
+    if (this.time.now >= this.nextWeaponSpawnAt) {
+      if (this.weaponPickups.length < maxPickups) {
+        this.spawnWeaponPickup();
+      }
       this.nextWeaponSpawnAt = this.time.now + WEAPON.spawnEveryMs;
     }
 
@@ -362,12 +365,17 @@ export class GameScene extends Phaser.Scene {
 
       const readyAt = this.botShotReadyAt.get(bot.id) ?? 0;
       const distance = Phaser.Math.Distance.Between(bot.x, bot.y, target.x, target.y);
-      if (this.time.now < readyAt || distance > WEAPON.botShootRange) {
+      if (this.time.now < readyAt || distance < WEAPON.botShootMinRange || distance > WEAPON.botShootRange) {
         continue;
       }
 
       const direction = new Phaser.Math.Vector2(target.x - bot.x, target.y - bot.y);
       if (direction.lengthSq() === 0) {
+        continue;
+      }
+
+      const aimAlignment = bot.aimDirection.dot(direction.clone().normalize());
+      if (aimAlignment < WEAPON.botAimDot) {
         continue;
       }
 

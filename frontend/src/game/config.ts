@@ -49,16 +49,19 @@ export const BOT = {
 
 export const WEAPON = {
   pickupRadius: 15,
-  spawnEveryMs: 7200,
-  firstSpawnDelayMs: 3600,
-  maxPickups: 2,
-  shotSpeed: 780,
+  spawnEveryMs: 8600,
+  firstSpawnDelayMs: 5200,
+  maxPickupsNormal: 1,
+  maxPickupsSpecial: 2,
+  shotSpeed: 720,
   shotRadius: 6,
-  shotLifetimeMs: 900,
-  shotCooldownMs: 850,
+  shotLifetimeMs: 880,
+  shotCooldownMs: 1250,
   pickupDetectRadius: 46,
-  botSeekRadius: 440,
-  botShootRange: 620
+  botSeekRadius: 390,
+  botShootMinRange: 170,
+  botShootRange: 560,
+  botAimDot: 0.92
 } as const;
 
 export const ROUND_STAGES = [
