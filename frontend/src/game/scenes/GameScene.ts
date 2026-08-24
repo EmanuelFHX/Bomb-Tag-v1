@@ -972,11 +972,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createScoreboard() {
-    this.scoreboardPanel = this.add.rectangle(ARENA.x + 88, ARENA.y + 98, 150, 184, 0x0c0f16, 0.76);
+    const panelX = ARENA.x + ARENA.width - 88;
+    const rowX = ARENA.x + ARENA.width - 151;
+    this.scoreboardPanel = this.add.rectangle(panelX, ARENA.y + 98, 150, 184, 0x0c0f16, 0.76);
     this.scoreboardPanel.setStrokeStyle(2, 0xffffff, 0.1);
     this.scoreboardPanel.setDepth(4);
 
-    this.scoreboardTitle = this.add.text(ARENA.x + 24, ARENA.y + 18, "", {
+    this.scoreboardTitle = this.add.text(rowX, ARENA.y + 18, "", {
       color: "#f7f8ff",
       fontFamily: "ui-sans-serif, system-ui",
       fontSize: "13px",
@@ -1004,7 +1006,7 @@ export class GameScene extends Phaser.Scene {
         fontSize: "11px",
         fontStyle: "900"
       });
-      const container = this.add.container(ARENA.x + 25, y, [marker, name, ...lives, status]);
+      const container = this.add.container(rowX, y, [marker, name, ...lives, status]);
       container.setDepth(5);
       this.scoreboardRows.push({ container, marker, name, lives, status });
     }
@@ -1104,7 +1106,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateHumanLivesHud() {
+    const isVisible = this.getAlivePlayers().length <= 3;
+    this.hudLivesLabel.setVisible(isVisible);
     for (let index = 0; index < this.humanLifeHudPips.length; index += 1) {
+      this.humanLifeHudPips[index].setVisible(isVisible);
+      if (!isVisible) {
+        continue;
+      }
       const isActive = index < this.human.lives && this.human.alive;
       const color = isActive ? (this.human.lives <= 1 ? 0xffcf33 : 0xff5d4f) : 0x303643;
       this.humanLifeHudPips[index].setFillStyle(color, isActive ? 1 : 0.85);
@@ -1117,13 +1125,16 @@ export class GameScene extends Phaser.Scene {
   private updateScoreboard() {
     const alivePlayers = this.getAlivePlayers();
     const dictionary = TEXT[this.language];
+    const isVisible = alivePlayers.length <= 3;
+    this.scoreboardPanel.setVisible(isVisible);
+    this.scoreboardTitle.setVisible(isVisible);
     this.scoreboardTitle.setText(dictionary.lives);
 
     for (let index = 0; index < this.scoreboardRows.length; index += 1) {
       const row = this.scoreboardRows[index];
       const player = alivePlayers[index];
 
-      if (!player) {
+      if (!isVisible || !player) {
         row.container.setVisible(false);
         continue;
       }
