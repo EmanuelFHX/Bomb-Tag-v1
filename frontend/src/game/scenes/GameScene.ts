@@ -60,6 +60,13 @@ const TEXT = {
     finalDuel: "FINAL DUEL",
     playersRemain: (count: number) => `${count} PLAYERS REMAIN`,
     threePlayers: "3 PLAYERS LEFT\n2 RECHARGING DASHES",
+    finalCutsceneTitle: "FINAL ROUND",
+    finalCutsceneRules: [
+      "3 lives restored",
+      "2 recharging dashes",
+      "+0.5s on every bomb pass",
+      "miss the returning catch: -1 life"
+    ],
     livesRestored: "LIVES RESTORED\n3 LIVES FOR EACH FINALIST",
     lifeLost: "-1 LIFE",
     eliminated: (name: string) => `${name} ELIMINATED`,
@@ -81,6 +88,13 @@ const TEXT = {
     finalDuel: "DUELO FINAL",
     playersRemain: (count: number) => `${count} JOGADORES RESTANTES`,
     threePlayers: "3 JOGADORES RESTANTES\n2 DASHES RECARREGAVEIS",
+    finalCutsceneTitle: "RODADA FINAL",
+    finalCutsceneRules: [
+      "3 vidas restauradas",
+      "2 dashes recarregaveis",
+      "+0,5s a cada passe da bomba",
+      "errou a pegada do retorno: -1 vida"
+    ],
     livesRestored: "VIDAS RESTAURADAS\n3 VIDAS PARA CADA FINALISTA",
     lifeLost: "-1 VIDA",
     eliminated: (name: string) => `${name} ELIMINADO`,
@@ -139,6 +153,7 @@ export class GameScene extends Phaser.Scene {
   private baseBombSpeedMultiplier = 1;
   private specialBombSpeedBonus = 0;
   private specialRoundLivesRestored = false;
+  private finalBattleMusic?: HTMLAudioElement;
 
   constructor() {
     super("GameScene");
@@ -162,6 +177,7 @@ export class GameScene extends Phaser.Scene {
       }
     });
     this.input.keyboard?.on("keydown", () => this.audio.unlock());
+    this.events.once("shutdown", () => this.finalBattleMusic?.pause());
   }
 
   update(_time: number, delta: number) {
@@ -203,6 +219,7 @@ export class GameScene extends Phaser.Scene {
     this.updateShots(deltaSeconds);
     this.bomb.update(deltaSeconds, this.arenaRect);
     this.resolveBombHits();
+    this.resolveSpecialCatchMiss();
     this.bomb.tryCatchOwner();
     this.resolveCountdown();
     this.updateHud(false);
@@ -331,6 +348,17 @@ export class GameScene extends Phaser.Scene {
     );
     this.bomb.setIntensity(this.baseBombSpeedMultiplier * (1 + this.specialBombSpeedBonus));
     return launched;
+  }
+
+  private startFinalBattleMusic() {
+    this.finalBattleMusic ??= new Audio("/audio/final-battle.mp4");
+    this.finalBattleMusic.loop = true;
+    this.finalBattleMusic.volume = 0.56;
+    this.finalBattleMusic.currentTime = 42;
+    void this.finalBattleMusic.play().catch(() => {
+      this.input.once("pointerdown", () => void this.finalBattleMusic?.play());
+      this.input.keyboard?.once("keydown", () => void this.finalBattleMusic?.play());
+    });
   }
 
   private updateWeapons() {
@@ -500,7 +528,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.time.delayedCall(1250, () => {
+    this.time.delayedCall(this.isFinalPhase() ? 120 : 1250, () => {
       this.startRound(alivePlayers.length);
     });
   }
@@ -614,6 +642,10 @@ export class GameScene extends Phaser.Scene {
         const remainingSeconds = Math.max(0, (this.roundEndsAt - this.time.now) / 1000);
 
         this.transferBomb(player);
+        if (this.isFinalPhase()) {
+          this.roundEndsAt += 500;
+          this.roundTimerSeconds += 0.5;
+        }
         this.bomb.playTransferBurst(bombState === "RETURNING" || ricochets > 0 || remainingSeconds < 1);
         this.audio.playHit({
           nextOwner: player,
@@ -634,6 +666,38 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.bomb.setOwner(nextOwner);
+  }
+
+  private resolveSpecialCatchMiss() {
+    if (!this.isFinalPhase() || this.bomb.state !== "RETURNING") {
+      return;
+    }
+
+    const owner = this.bomb.owner;
+    if (!owner.alive || !owner.isDashing) {
+      return;
+    }
+
+    const distance = Phaser.Math.Distance.Between(this.bomb.x, this.bomb.y, owner.x, owner.y);
+    if (distance > BOMB.specialMissCatchDistance) {
+      return;
+    }
+
+    const wasEliminated = owner.takeShotDamage(true);
+    this.audio.playShotDamage(owner === this.human);
+    this.playShotImpact(owner.x, owner.y, 0xffcf33);
+    this.showLifeLostFeedback(owner);
+
+    if (wasEliminated) {
+      this.resolveShotElimination(owner);
+      return;
+    }
+
+    this.bomb.setOwner(owner);
+  }
+
+  private isFinalPhase() {
+    return this.specialRoundLivesRestored || this.getAlivePlayers().length <= 3;
   }
 
   private resolveCountdown() {
@@ -661,7 +725,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.time.delayedCall(1350, () => {
+    this.time.delayedCall(this.isFinalPhase() ? 120 : 1350, () => {
       this.startRound(alivePlayers.length);
     });
   }
@@ -755,14 +819,187 @@ export class GameScene extends Phaser.Scene {
     this.bomb.setIntensity(this.baseBombSpeedMultiplier);
     this.transferBomb(nextOwner);
     this.updateHud(true);
-    this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
-    this.showRoundMessage(roundMessage, alivePlayers.length <= 3 ? "#ffcf33" : "#f7f8ff", isSpecialRound ? 1700 : 1000);
     if (shouldRestoreSpecialLives) {
-      this.time.delayedCall(1860, () => {
-        if (!this.matchOver && !this.roundResolving) {
-          this.currentRoundMessageKey = "livesRestored";
-          this.showRoundMessage(TEXT[this.language].livesRestored, "#86f7ff", 1300);
+      this.playFinalRoundCutscene(alivePlayers);
+    } else {
+      this.cameras.main.flash(120, 255, alivePlayers.length <= 2 ? 95 : 210, 64, false);
+      this.showRoundMessage(roundMessage, alivePlayers.length <= 3 ? "#ffcf33" : "#f7f8ff", isSpecialRound ? 1700 : 1000);
+    }
+  }
+
+  private playFinalRoundCutscene(finalists: Player[]) {
+    const dictionary = TEXT[this.language];
+    this.roundResolving = true;
+    this.roundEndsAt += 3000;
+    this.startFinalBattleMusic();
+    this.playSpecialRoundIntro(finalists);
+
+    const overlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x070910, 0.72);
+    overlay.setDepth(13);
+    const title = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 118, dictionary.finalCutsceneTitle, {
+      color: "#ffcf33",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "64px",
+      fontStyle: "900",
+      stroke: "#0c0f16",
+      strokeThickness: 8
+    });
+    title.setOrigin(0.5);
+    title.setDepth(14);
+
+    const ruleText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20, dictionary.finalCutsceneRules.join("\n"), {
+      align: "center",
+      color: "#f7f8ff",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "25px",
+      fontStyle: "800",
+      lineSpacing: 14,
+      stroke: "#0c0f16",
+      strokeThickness: 5
+    });
+    ruleText.setOrigin(0.5);
+    ruleText.setDepth(14);
+
+    const startText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 138, "3", {
+      color: "#86f7ff",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "54px",
+      fontStyle: "900",
+      stroke: "#0c0f16",
+      strokeThickness: 7
+    });
+    startText.setOrigin(0.5);
+    startText.setDepth(14);
+
+    for (let index = 0; index < 3; index += 1) {
+      this.time.delayedCall(index * 1000, () => {
+        startText.setText(String(3 - index));
+        startText.setScale(0.7);
+        this.tweens.add({
+          targets: startText,
+          scale: 1.15,
+          duration: 220,
+          yoyo: true,
+          ease: "Back.easeOut"
+        });
+      });
+    }
+
+    this.tweens.add({
+      targets: [overlay, title, ruleText, startText],
+      alpha: 0,
+      delay: 2750,
+      duration: 250,
+      ease: "Quad.easeIn",
+      onComplete: () => {
+        overlay.destroy();
+        title.destroy();
+        ruleText.destroy();
+        startText.destroy();
+        this.roundResolving = false;
+        this.updateHud(true);
+      }
+    });
+  }
+
+  private playSpecialRoundIntro(finalists: Player[]) {
+    this.cameras.main.flash(420, 255, 207, 51, false);
+    this.cameras.main.shake(260, 0.004);
+
+    const vignette = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x080a10, 0);
+    vignette.setDepth(6);
+    this.tweens.add({
+      targets: vignette,
+      alpha: 0.46,
+      duration: 180,
+      yoyo: true,
+      hold: 420,
+      ease: "Quad.easeOut",
+      onComplete: () => vignette.destroy()
+    });
+
+    const topLine = this.add.rectangle(this.arenaRect.centerX, this.arenaRect.top + 8, 0, 5, 0xffcf33, 0.95);
+    const bottomLine = this.add.rectangle(this.arenaRect.centerX, this.arenaRect.bottom - 8, 0, 5, 0xffcf33, 0.95);
+    const leftLine = this.add.rectangle(this.arenaRect.left + 8, this.arenaRect.centerY, 5, 0, 0xffcf33, 0.95);
+    const rightLine = this.add.rectangle(this.arenaRect.right - 8, this.arenaRect.centerY, 5, 0, 0xffcf33, 0.95);
+    const lines = [topLine, bottomLine, leftLine, rightLine];
+    for (const line of lines) {
+      line.setDepth(7);
+    }
+
+    this.tweens.add({
+      targets: [topLine, bottomLine],
+      width: this.arenaRect.width - 36,
+      duration: 460,
+      ease: "Cubic.easeOut"
+    });
+    this.tweens.add({
+      targets: [leftLine, rightLine],
+      height: this.arenaRect.height - 36,
+      duration: 460,
+      ease: "Cubic.easeOut"
+    });
+    this.tweens.add({
+      targets: lines,
+      alpha: 0,
+      delay: 960,
+      duration: 260,
+      ease: "Quad.easeIn",
+      onComplete: () => {
+        for (const line of lines) {
+          line.destroy();
         }
+      }
+    });
+
+    for (const player of finalists) {
+      const halo = this.add.circle(player.x, player.y, PLAYER.radius + 18, player.color, 0);
+      halo.setStrokeStyle(4, player.color, 0.82);
+      halo.setDepth(6);
+      this.tweens.add({
+        targets: halo,
+        scale: 2.2,
+        alpha: 0,
+        duration: 740,
+        ease: "Quad.easeOut",
+        onComplete: () => halo.destroy()
+      });
+      this.tweens.add({
+        targets: player.container,
+        scale: 1.18,
+        duration: 130,
+        yoyo: true,
+        ease: "Back.easeOut"
+      });
+    }
+
+    for (let index = 0; index < 26; index += 1) {
+      const side = index % 4;
+      const x = side === 0
+        ? Phaser.Math.Between(this.arenaRect.left, this.arenaRect.right)
+        : side === 1
+          ? this.arenaRect.right
+          : side === 2
+            ? Phaser.Math.Between(this.arenaRect.left, this.arenaRect.right)
+            : this.arenaRect.left;
+      const y = side === 0
+        ? this.arenaRect.top
+        : side === 1
+          ? Phaser.Math.Between(this.arenaRect.top, this.arenaRect.bottom)
+          : side === 2
+            ? this.arenaRect.bottom
+            : Phaser.Math.Between(this.arenaRect.top, this.arenaRect.bottom);
+      const spark = this.add.rectangle(x, y, 12, 3, index % 3 === 0 ? 0x86f7ff : 0xffcf33, 0.9);
+      spark.setRotation(Phaser.Math.FloatBetween(-0.8, 0.8));
+      spark.setDepth(7);
+      this.tweens.add({
+        targets: spark,
+        x: this.arenaRect.centerX + (x - this.arenaRect.centerX) * 0.82,
+        y: this.arenaRect.centerY + (y - this.arenaRect.centerY) * 0.82,
+        alpha: 0,
+        duration: Phaser.Math.Between(520, 920),
+        ease: "Quad.easeOut",
+        onComplete: () => spark.destroy()
       });
     }
   }
@@ -938,9 +1175,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getArenaBounds(aliveCount: number) {
-    const scale = aliveCount <= 2 ? 0.74 : aliveCount <= 3 ? 0.84 : 1;
-    const width = ARENA.width * scale;
-    const height = ARENA.height * scale;
+    const width = ARENA.width * (aliveCount <= 2 ? 0.68 : aliveCount <= 3 ? 0.86 : 1);
+    const height = ARENA.height * (aliveCount <= 2 ? 0.8 : aliveCount <= 3 ? 0.82 : 1);
     const x = ARENA.x + (ARENA.width - width) / 2;
     const y = ARENA.y + (ARENA.height - height) / 2;
 
