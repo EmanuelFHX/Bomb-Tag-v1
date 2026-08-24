@@ -37,6 +37,14 @@ type Shot = {
   expiresAt: number;
 };
 
+type ScoreboardRow = {
+  container: Phaser.GameObjects.Container;
+  marker: Phaser.GameObjects.Rectangle;
+  name: Phaser.GameObjects.Text;
+  lives: Phaser.GameObjects.Arc[];
+  status: Phaser.GameObjects.Text;
+};
+
 const TEXT = {
   en: {
     humanName: "YOU",
@@ -44,6 +52,7 @@ const TEXT = {
     players: "PLAYERS",
     stage: "STAGE",
     dash: "DASH",
+    lives: "LIVES",
     opening: "OPENING",
     pressure: "PRESSURE",
     panic: "PANIC",
@@ -64,6 +73,7 @@ const TEXT = {
     players: "JOGADORES",
     stage: "RODADA",
     dash: "DASH",
+    lives: "VIDAS",
     opening: "INICIO",
     pressure: "PRESSAO",
     panic: "PANICO",
@@ -92,10 +102,15 @@ export class GameScene extends Phaser.Scene {
   private hudOwner!: Phaser.GameObjects.Text;
   private hudStage!: Phaser.GameObjects.Text;
   private hudPlayers!: Phaser.GameObjects.Text;
+  private hudLivesLabel!: Phaser.GameObjects.Text;
   private hudDashLabel!: Phaser.GameObjects.Text;
   private helpText!: Phaser.GameObjects.Text;
   private languageButton!: Phaser.GameObjects.Container;
   private languageLabel!: Phaser.GameObjects.Text;
+  private humanLifeHudPips: Phaser.GameObjects.Arc[] = [];
+  private scoreboardPanel!: Phaser.GameObjects.Rectangle;
+  private scoreboardTitle!: Phaser.GameObjects.Text;
+  private scoreboardRows: ScoreboardRow[] = [];
   private dashSlots: Phaser.GameObjects.Rectangle[] = [];
   private dashSlotFills: Phaser.GameObjects.Rectangle[] = [];
   private dangerOverlay!: Phaser.GameObjects.Rectangle;
@@ -254,6 +269,8 @@ export class GameScene extends Phaser.Scene {
     this.hudOwner = this.add.text(ARENA.x + 142, 28, "", baseStyle);
     this.hudPlayers = this.add.text(ARENA.x + 320, 28, "", baseStyle);
     this.hudStage = this.add.text(ARENA.x + 500, 28, "", baseStyle);
+    this.hudLivesLabel = this.add.text(ARENA.x + 690, 28, "", baseStyle);
+    this.createHumanLivesHud();
     this.hudDashLabel = this.add.text(GAME_WIDTH - 332, 28, "", baseStyle);
     this.createDashHud();
     this.helpText = this.add.text(
@@ -287,6 +304,7 @@ export class GameScene extends Phaser.Scene {
       .setVisible(false);
 
     this.createLanguageButton();
+    this.createScoreboard();
     this.updateHud(true);
   }
 
@@ -650,9 +668,12 @@ export class GameScene extends Phaser.Scene {
     this.setTextIfChanged(this.hudOwner, "lastOwnerText", ownerText);
     this.setTextIfChanged(this.hudPlayers, "lastPlayersText", playersText);
     this.setTextIfChanged(this.hudStage, "lastStageText", stageText);
+    this.hudLivesLabel.setText(`${dictionary.lives}:`);
     this.hudDashLabel.setText(dictionary.dash);
     this.helpText.setText(dictionary.controls);
     this.languageLabel.setText(dictionary.language);
+    this.updateHumanLivesHud();
+    this.updateScoreboard();
     this.updateDashHud();
 
     const pulse = 1 + (1 - remaining / this.roundTimerSeconds) * 0.42;
@@ -938,6 +959,57 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private createHumanLivesHud() {
+    const startX = ARENA.x + 765;
+    const y = 37;
+
+    for (let index = 0; index < PLAYER.maxLives; index += 1) {
+      const pip = this.add.circle(startX + index * 24, y, 9, 0xff5d4f, 1);
+      pip.setStrokeStyle(2, 0xffffff, 0.62);
+      pip.setDepth(5);
+      this.humanLifeHudPips.push(pip);
+    }
+  }
+
+  private createScoreboard() {
+    this.scoreboardPanel = this.add.rectangle(ARENA.x + 88, ARENA.y + 98, 150, 184, 0x0c0f16, 0.76);
+    this.scoreboardPanel.setStrokeStyle(2, 0xffffff, 0.1);
+    this.scoreboardPanel.setDepth(4);
+
+    this.scoreboardTitle = this.add.text(ARENA.x + 24, ARENA.y + 18, "", {
+      color: "#f7f8ff",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "13px",
+      fontStyle: "900"
+    });
+    this.scoreboardTitle.setDepth(5);
+
+    for (let index = 0; index < BOT.count + 1; index += 1) {
+      const y = ARENA.y + 43 + index * 19;
+      const marker = this.add.rectangle(0, 0, 8, 8, 0xffffff, 1);
+      const name = this.add.text(13, -7, "", {
+        color: "#f7f8ff",
+        fontFamily: "ui-sans-serif, system-ui",
+        fontSize: "11px",
+        fontStyle: "800"
+      });
+      const lives = Array.from({ length: PLAYER.maxLives }, (_, lifeIndex) => {
+        const pip = this.add.circle(78 + lifeIndex * 11, 0, 4, 0xff5d4f, 1);
+        pip.setStrokeStyle(1, 0xffffff, 0.35);
+        return pip;
+      });
+      const status = this.add.text(116, -7, "", {
+        color: "#86f7ff",
+        fontFamily: "ui-sans-serif, system-ui",
+        fontSize: "11px",
+        fontStyle: "900"
+      });
+      const container = this.add.container(ARENA.x + 25, y, [marker, name, ...lives, status]);
+      container.setDepth(5);
+      this.scoreboardRows.push({ container, marker, name, lives, status });
+    }
+  }
+
   private createLanguageButton() {
     const background = this.add.rectangle(0, 0, 82, 34, 0x171b24, 0.95);
     background.setStrokeStyle(2, 0x8defff, 0.42);
@@ -1031,6 +1103,49 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private updateHumanLivesHud() {
+    for (let index = 0; index < this.humanLifeHudPips.length; index += 1) {
+      const isActive = index < this.human.lives && this.human.alive;
+      const color = isActive ? (this.human.lives <= 1 ? 0xffcf33 : 0xff5d4f) : 0x303643;
+      this.humanLifeHudPips[index].setFillStyle(color, isActive ? 1 : 0.85);
+      this.humanLifeHudPips[index].setAlpha(isActive ? 1 : 0.34);
+      this.humanLifeHudPips[index].setScale(isActive && this.human.lives <= 1 ? 1.15 : 1);
+      this.humanLifeHudPips[index].setStrokeStyle(2, isActive ? 0xffffff : 0x56606f, isActive ? 0.68 : 0.3);
+    }
+  }
+
+  private updateScoreboard() {
+    const alivePlayers = this.getAlivePlayers();
+    const dictionary = TEXT[this.language];
+    this.scoreboardTitle.setText(dictionary.lives);
+
+    for (let index = 0; index < this.scoreboardRows.length; index += 1) {
+      const row = this.scoreboardRows[index];
+      const player = alivePlayers[index];
+
+      if (!player) {
+        row.container.setVisible(false);
+        continue;
+      }
+
+      row.container.setVisible(true);
+      row.marker.setFillStyle(player.color, 1);
+      row.marker.setScale(player === this.human ? 1.25 : 1);
+      row.name.setText(this.getPlayerName(player));
+      row.name.setColor(player === this.human ? "#ffffff" : "#cfd5e5");
+
+      for (let lifeIndex = 0; lifeIndex < row.lives.length; lifeIndex += 1) {
+        const isActive = lifeIndex < player.lives;
+        row.lives[lifeIndex].setFillStyle(isActive ? 0xff5d4f : 0x303643, isActive ? 1 : 0.85);
+        row.lives[lifeIndex].setAlpha(isActive ? 1 : 0.35);
+      }
+
+      const isBombHolder = this.bomb.responsible === player;
+      row.status.setText(isBombHolder ? "B" : player.hasWeapon ? "W" : "");
+      row.status.setColor(isBombHolder ? "#ffcf33" : "#86f7ff");
+    }
+  }
+
   private getBotIntent(bot: Player): BotIntent {
     const fallbackTarget = this.getNearestOpponent(bot);
     const aimTarget = fallbackTarget
@@ -1038,6 +1153,12 @@ export class GameScene extends Phaser.Scene {
       : new Phaser.Math.Vector2(this.human.x, this.human.y);
     const moveDirection = new Phaser.Math.Vector2(0, 0);
     let shouldDash = false;
+    const shotThreat = this.getShotThreat(bot);
+    if (shotThreat.risk > 0) {
+      moveDirection.copy(shotThreat.escapeDirection);
+      shouldDash = shotThreat.risk > 0.82 && bot.dashChargeCount > 0;
+      return { aimTarget, moveDirection, shouldDash };
+    }
 
     if (this.bomb.state === "HELD") {
       if (this.bomb.owner === bot && fallbackTarget) {
@@ -1071,6 +1192,13 @@ export class GameScene extends Phaser.Scene {
       return { aimTarget, moveDirection, shouldDash };
     }
 
+    const armedThreat = this.getArmedOpponentThreat(bot);
+    if (armedThreat.risk > 0) {
+      moveDirection.copy(armedThreat.escapeDirection);
+      shouldDash = armedThreat.risk > 0.84 && bot.dashChargeCount > 0;
+      return { aimTarget, moveDirection, shouldDash };
+    }
+
     const pickup = this.getNearestWeaponPickup(bot);
     if (!bot.hasWeapon && pickup) {
       moveDirection.set(pickup.shape.x - bot.x, pickup.shape.y - bot.y).normalize();
@@ -1097,6 +1225,96 @@ export class GameScene extends Phaser.Scene {
         const distanceB = Phaser.Math.Distance.Squared(player.x, player.y, b.shape.x, b.shape.y);
         return distanceA - distanceB;
       })[0];
+  }
+
+  private getShotThreat(bot: Player) {
+    const escapeDirection = new Phaser.Math.Vector2(0, 0);
+    let highestRisk = 0;
+
+    for (const shot of this.shots) {
+      if (shot.owner === bot || shot.velocity.lengthSq() === 0) {
+        continue;
+      }
+
+      const fromShotToBot = new Phaser.Math.Vector2(bot.x - shot.shape.x, bot.y - shot.shape.y);
+      const shotDirection = shot.velocity.clone().normalize();
+      const speed = Math.max(shot.velocity.length(), 1);
+      const timeAlongPathMs = (fromShotToBot.dot(shotDirection) / speed) * 1000;
+
+      if (timeAlongPathMs < -80 || timeAlongPathMs > WEAPON.botShotLookAheadMs) {
+        continue;
+      }
+
+      const closestPoint = new Phaser.Math.Vector2(shot.shape.x, shot.shape.y).add(
+        shotDirection.clone().scale((timeAlongPathMs / 1000) * speed)
+      );
+      const distanceToPath = Phaser.Math.Distance.Between(bot.x, bot.y, closestPoint.x, closestPoint.y);
+      if (distanceToPath > WEAPON.botShotEvadeRadius) {
+        continue;
+      }
+
+      const side = Math.sign(fromShotToBot.cross(shotDirection)) || 1;
+      const candidate = new Phaser.Math.Vector2(-shotDirection.y * side, shotDirection.x * side);
+      const centerPull = new Phaser.Math.Vector2(
+        this.arenaRect.centerX - bot.x,
+        this.arenaRect.centerY - bot.y
+      ).normalize();
+      candidate.scale(0.82).add(centerPull.scale(0.18)).normalize();
+
+      const distanceRisk = 1 - distanceToPath / WEAPON.botShotEvadeRadius;
+      const timingRisk = 1 - Math.max(0, timeAlongPathMs) / WEAPON.botShotLookAheadMs;
+      const risk = Phaser.Math.Clamp(distanceRisk * 0.68 + timingRisk * 0.32, 0, 1);
+      if (risk > highestRisk) {
+        highestRisk = risk;
+        escapeDirection.copy(candidate);
+      }
+    }
+
+    return { risk: highestRisk, escapeDirection };
+  }
+
+  private getArmedOpponentThreat(bot: Player) {
+    const escapeDirection = new Phaser.Math.Vector2(0, 0);
+    let highestRisk = 0;
+
+    for (const opponent of this.getAlivePlayers()) {
+      if (opponent === bot || !opponent.hasWeapon) {
+        continue;
+      }
+
+      const fromOpponentToBot = new Phaser.Math.Vector2(bot.x - opponent.x, bot.y - opponent.y);
+      const distance = fromOpponentToBot.length();
+      if (distance <= 0 || distance > WEAPON.botArmedThreatRange) {
+        continue;
+      }
+
+      const aimDirection = opponent.aimDirection.clone().normalize();
+      const projection = fromOpponentToBot.dot(aimDirection);
+      if (projection < 0) {
+        continue;
+      }
+
+      const closestPoint = new Phaser.Math.Vector2(opponent.x, opponent.y).add(aimDirection.clone().scale(projection));
+      const distanceToLine = Phaser.Math.Distance.Between(bot.x, bot.y, closestPoint.x, closestPoint.y);
+      if (distanceToLine > WEAPON.botArmedLineRadius) {
+        continue;
+      }
+
+      const side = Math.sign(fromOpponentToBot.cross(aimDirection)) || 1;
+      const candidate = new Phaser.Math.Vector2(-aimDirection.y * side, aimDirection.x * side);
+      const away = fromOpponentToBot.normalize();
+      candidate.scale(0.74).add(away.scale(0.26)).normalize();
+
+      const lineRisk = 1 - distanceToLine / WEAPON.botArmedLineRadius;
+      const rangeRisk = 1 - distance / WEAPON.botArmedThreatRange;
+      const risk = Phaser.Math.Clamp(lineRisk * 0.72 + rangeRisk * 0.28, 0, 1);
+      if (risk > highestRisk) {
+        highestRisk = risk;
+        escapeDirection.copy(candidate);
+      }
+    }
+
+    return { risk: highestRisk, escapeDirection };
   }
 
   private getBombThreat(bot: Player) {
