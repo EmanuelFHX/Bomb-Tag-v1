@@ -170,7 +170,9 @@ export class Player {
       this.tryDash(dashDirection);
     }
 
-    if (!this.isDashing) {
+    if (this.isDashing) {
+      this.applyDashMovement(deltaSeconds);
+    } else {
       this.applyMovement(deltaSeconds, moveDirection, PLAYER.maxSpeed);
     }
 
@@ -237,6 +239,12 @@ export class Player {
       this.velocity.setLength(maxSpeed);
     }
 
+    this.container.x += this.velocity.x * deltaSeconds;
+    this.container.y += this.velocity.y * deltaSeconds;
+    this.spawnDashAfterimage();
+  }
+
+  private applyDashMovement(deltaSeconds: number) {
     this.container.x += this.velocity.x * deltaSeconds;
     this.container.y += this.velocity.y * deltaSeconds;
     this.spawnDashAfterimage();
