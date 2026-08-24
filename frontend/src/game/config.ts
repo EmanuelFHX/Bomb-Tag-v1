@@ -35,6 +35,7 @@ export const BOMB = {
   specialMissCatchDistance: 46,
   transferCooldownMs: 180,
   timerSeconds: 20,
+  specialHomingTurnRate: 2.8,
   specialThrowSpeedStep: 0.035,
   specialThrowSpeedMaxBonus: 0.22
 } as const;

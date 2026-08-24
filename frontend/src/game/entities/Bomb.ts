@@ -17,6 +17,7 @@ export class Bomb {
   ricochets = 0;
   canTransferAt = 0;
   speedMultiplier = 1;
+  homingTarget: Player | null = null;
 
   private readonly scene: Phaser.Scene;
   private readonly trail: Phaser.GameObjects.Arc[] = [];
@@ -59,6 +60,7 @@ export class Bomb {
     this.velocity.set(0, 0);
     this.ricochets = 0;
     this.canTransferAt = this.scene.time.now + BOMB.transferCooldownMs;
+    this.homingTarget = null;
     this.syncHeldPosition();
     this.setVisible(true);
   }
@@ -82,6 +84,10 @@ export class Bomb {
     this.fuse.setStrokeStyle(2, color, speedMultiplier >= 1.5 ? 0.8 : 0.55);
   }
 
+  setHomingTarget(target: Player | null) {
+    this.homingTarget = target;
+  }
+
   launch(direction: Phaser.Math.Vector2) {
     if (this.state !== "HELD" || direction.lengthSq() === 0) {
       return false;
@@ -93,6 +99,7 @@ export class Bomb {
     this.launchedAt = this.scene.time.now;
     this.ricochets = 0;
     this.canTransferAt = this.scene.time.now + BOMB.transferCooldownMs;
+    this.homingTarget = null;
     this.clearTrail();
     this.applyVisualState();
     return true;
@@ -114,6 +121,8 @@ export class Bomb {
 
     if (this.state === "RETURNING") {
       this.steerTowardOwner(deltaSeconds);
+    } else if (this.homingTarget?.alive) {
+      this.steerTowardTarget(this.homingTarget, deltaSeconds);
     }
 
     this.shape.x += this.velocity.x * deltaSeconds;
@@ -175,6 +184,23 @@ export class Bomb {
     const maxReturnSpeed = BOMB.returnSpeed * this.speedMultiplier;
     if (this.velocity.length() > maxReturnSpeed) {
       this.velocity.setLength(maxReturnSpeed);
+    }
+  }
+
+  private steerTowardTarget(target: Player, deltaSeconds: number) {
+    const desired = new Phaser.Math.Vector2(target.x - this.x, target.y - this.y);
+    if (desired.lengthSq() === 0) {
+      return;
+    }
+
+    const currentSpeed = Math.max(this.velocity.length(), BOMB.speed * this.speedMultiplier);
+    desired.normalize().scale(currentSpeed);
+    const blend = Phaser.Math.Clamp(BOMB.specialHomingTurnRate * deltaSeconds, 0, 0.09);
+    this.velocity.x = Phaser.Math.Linear(this.velocity.x, desired.x, blend);
+    this.velocity.y = Phaser.Math.Linear(this.velocity.y, desired.y, blend);
+
+    if (this.velocity.length() > currentSpeed) {
+      this.velocity.setLength(currentSpeed);
     }
   }
 

@@ -347,8 +347,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   private launchBomb(direction: Phaser.Math.Vector2) {
+    const owner = this.bomb.owner;
+    const homingTarget = this.isFinalPhase() ? this.getSpecialBombTarget(owner, direction) : null;
     const launched = this.bomb.launch(direction);
-    if (!launched || this.getAlivePlayers().length > 3) {
+    if (!launched) {
+      return launched;
+    }
+
+    this.bomb.setHomingTarget(homingTarget);
+    if (!this.isFinalPhase()) {
       return launched;
     }
 
@@ -366,7 +373,7 @@ export class GameScene extends Phaser.Scene {
     music.muted = false;
     music.volume = 0.04;
     music.currentTime = 42;
-    const fadeIn = () => this.fadeFinalBattleMusic(0.5, 3000);
+    const fadeIn = () => this.fadeFinalBattleMusic(0.2, 3000);
     void music.play().then(fadeIn).catch(() => {
       const resume = () => {
         music.muted = false;
@@ -405,7 +412,7 @@ export class GameScene extends Phaser.Scene {
       this.finalBattleMusicPrimed = true;
     }).catch(() => {
       music.muted = false;
-      music.volume = 0.5;
+      music.volume = 0.2;
     });
   }
 
@@ -910,19 +917,54 @@ export class GameScene extends Phaser.Scene {
     title.setAlpha(0);
     title.setScale(0.86);
 
-    const ruleText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 20, dictionary.finalCutsceneRules.join("\n"), {
-      align: "center",
-      color: "#f7f8ff",
-      fontFamily: "ui-sans-serif, system-ui",
-      fontSize: "25px",
-      fontStyle: "800",
-      lineSpacing: 14,
-      stroke: "#0c0f16",
-      strokeThickness: 5
+    const ruleCards = dictionary.finalCutsceneRules.map((rule, index) => {
+      const accentColor = index % 2 === 0 ? 0xffcf33 : 0x86f7ff;
+      const panel = this.add.rectangle(0, 0, 640, 78, 0x111520, 0.92);
+      panel.setStrokeStyle(2, accentColor, 0.72);
+      const glow = this.add.rectangle(0, 0, 660, 96, accentColor, 0.08);
+      const label = this.add.text(0, 0, rule.toUpperCase(), {
+        align: "center",
+        color: "#f7f8ff",
+        fontFamily: "ui-sans-serif, system-ui",
+        fontSize: "24px",
+        fontStyle: "900",
+        lineSpacing: 2,
+        stroke: "#0c0f16",
+        strokeThickness: 3,
+        wordWrap: { width: 560 }
+      });
+      label.setOrigin(0.5);
+      const card = this.add.container(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 6, [glow, panel, label]);
+      card.setDepth(31);
+      card.setAlpha(0);
+      card.setScale(0.72 + index * 0.04);
+      const showDelay = 560 + index * 500;
+      const targetScale = 1.02 + index * 0.08;
+      this.tweens.add({
+        targets: card,
+        alpha: 1,
+        scale: targetScale,
+        delay: showDelay,
+        duration: 180,
+        ease: "Back.easeOut"
+      });
+      this.tweens.add({
+        targets: card,
+        scale: targetScale + 0.1,
+        delay: showDelay + 180,
+        duration: 250,
+        ease: "Sine.easeOut"
+      });
+      this.tweens.add({
+        targets: card,
+        alpha: 0,
+        scale: targetScale + 0.14,
+        delay: showDelay + 430,
+        duration: 160,
+        ease: "Quad.easeIn"
+      });
+      return card;
     });
-    ruleText.setOrigin(0.5);
-    ruleText.setDepth(31);
-    ruleText.setAlpha(0);
 
     const startText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 138, "3", {
       color: "#86f7ff",
@@ -950,15 +992,6 @@ export class GameScene extends Phaser.Scene {
       duration: 360,
       ease: "Back.easeOut"
     });
-    this.tweens.add({
-      targets: ruleText,
-      alpha: 1,
-      y: ruleText.y + 10,
-      delay: 560,
-      duration: 360,
-      ease: "Quad.easeOut"
-    });
-
     for (let index = 0; index < 3; index += 1) {
       this.time.delayedCall(index * 1000, () => {
         startText.setText(String(3 - index));
@@ -975,7 +1008,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.tweens.add({
-      targets: [overlay, title, ruleText, startText],
+      targets: [overlay, title, ...ruleCards, startText],
       alpha: 0,
       delay: 2750,
       duration: 250,
@@ -983,7 +1016,7 @@ export class GameScene extends Phaser.Scene {
       onComplete: () => {
         overlay.destroy();
         title.destroy();
-        ruleText.destroy();
+        ruleCards.forEach((card) => card.destroy());
         startText.destroy();
         this.startRound(aliveCount);
       }
@@ -1675,6 +1708,26 @@ export class GameScene extends Phaser.Scene {
         const distanceB = Phaser.Math.Distance.Squared(player.x, player.y, b.x, b.y);
         return distanceA - distanceB;
       })[0];
+  }
+
+  private getSpecialBombTarget(owner: Player, direction: Phaser.Math.Vector2) {
+    const aimDirection = direction.lengthSq() > 0
+      ? direction.clone().normalize()
+      : owner.aimDirection.clone().normalize();
+
+    return this.getAlivePlayers()
+      .filter((candidate) => candidate !== owner)
+      .sort((a, b) => {
+        const toA = new Phaser.Math.Vector2(a.x - owner.x, a.y - owner.y);
+        const toB = new Phaser.Math.Vector2(b.x - owner.x, b.y - owner.y);
+        const distanceA = Math.max(toA.length(), 1);
+        const distanceB = Math.max(toB.length(), 1);
+        const dotA = aimDirection.dot(toA.normalize());
+        const dotB = aimDirection.dot(toB.normalize());
+        const scoreA = (1 - dotA) * 420 + distanceA * 0.34;
+        const scoreB = (1 - dotB) * 420 + distanceB * 0.34;
+        return scoreA - scoreB;
+      })[0] ?? null;
   }
 
   private getPerpendicularTowardCenter(bot: Player, target: Player) {
