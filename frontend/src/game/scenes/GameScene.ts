@@ -241,6 +241,7 @@ export class GameScene extends Phaser.Scene {
         const remainingSeconds = Math.max(0, (this.roundEndsAt - this.time.now) / 1000);
 
         this.transferBomb(player);
+        this.bomb.playTransferBurst(bombState === "RETURNING" || ricochets > 0 || remainingSeconds < 1);
         this.audio.playHit({
           nextOwner: player,
           previousOwner,

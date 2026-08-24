@@ -7,6 +7,7 @@ export type BombState = "HELD" | "OUTBOUND" | "RETURNING";
 export class Bomb {
   readonly shape: Phaser.GameObjects.Arc;
   readonly fuse: Phaser.GameObjects.Arc;
+  readonly directionRing: Phaser.GameObjects.Arc;
 
   state: BombState = "HELD";
   owner: Player;
@@ -18,6 +19,10 @@ export class Bomb {
   speedMultiplier = 1;
 
   private readonly scene: Phaser.Scene;
+  private readonly trail: Phaser.GameObjects.Arc[] = [];
+  private trailIndex = 0;
+  private nextTrailAt = 0;
+  private lastVisualState: BombState | "" = "";
 
   constructor(scene: Phaser.Scene, owner: Player) {
     this.scene = scene;
@@ -27,6 +32,15 @@ export class Bomb {
     this.shape.setStrokeStyle(4, 0x1b1d22, 1);
     this.fuse = scene.add.circle(owner.x, owner.y, BOMB.radius + 7, 0xff5d4f, 0.12);
     this.fuse.setStrokeStyle(2, 0xff5d4f, 0.55);
+    this.directionRing = scene.add.circle(owner.x, owner.y, BOMB.radius + 12, 0xffffff, 0);
+    this.directionRing.setStrokeStyle(2, 0xffd240, 0);
+
+    for (let index = 0; index < 8; index += 1) {
+      const trailDot = scene.add.circle(owner.x, owner.y, BOMB.radius - 2, 0xffd240, 0);
+      trailDot.setDepth(-1);
+      this.trail.push(trailDot);
+    }
+
     this.syncHeldPosition();
   }
 
@@ -52,6 +66,13 @@ export class Bomb {
   setVisible(isVisible: boolean) {
     this.shape.setVisible(isVisible);
     this.fuse.setVisible(isVisible);
+    this.directionRing.setVisible(isVisible);
+    for (const trailDot of this.trail) {
+      trailDot.setVisible(isVisible);
+      if (!isVisible) {
+        trailDot.setAlpha(0);
+      }
+    }
   }
 
   setIntensity(speedMultiplier: number) {
@@ -72,6 +93,8 @@ export class Bomb {
     this.launchedAt = this.scene.time.now;
     this.ricochets = 0;
     this.canTransferAt = this.scene.time.now + BOMB.transferCooldownMs;
+    this.clearTrail();
+    this.applyVisualState();
     return true;
   }
 
@@ -85,6 +108,7 @@ export class Bomb {
       const flightTime = this.scene.time.now - this.launchedAt;
       if (flightTime > BOMB.maxTravelMs || this.ricochets >= BOMB.maxRicochetsBeforeReturn) {
         this.state = "RETURNING";
+        this.applyVisualState();
       }
     }
 
@@ -95,7 +119,24 @@ export class Bomb {
     this.shape.x += this.velocity.x * deltaSeconds;
     this.shape.y += this.velocity.y * deltaSeconds;
     this.fuse.setPosition(this.shape.x, this.shape.y);
+    this.directionRing.setPosition(this.shape.x, this.shape.y);
+    this.spawnTrail();
     this.resolveWallBounce(arena);
+  }
+
+  playTransferBurst(isSpecial: boolean) {
+    this.scene.tweens.add({
+      targets: this.directionRing,
+      scale: isSpecial ? 2.1 : 1.65,
+      alpha: 0.8,
+      duration: 80,
+      yoyo: true,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        this.directionRing.setScale(1);
+        this.applyVisualState();
+      }
+    });
   }
 
   tryCatchOwner() {
@@ -116,6 +157,8 @@ export class Bomb {
     const offset = this.owner.aimDirection.clone().scale(BOMB.heldOffset);
     this.shape.setPosition(this.owner.x + offset.x, this.owner.y + offset.y);
     this.fuse.setPosition(this.shape.x, this.shape.y);
+    this.directionRing.setPosition(this.shape.x, this.shape.y);
+    this.applyVisualState();
   }
 
   private steerTowardOwner(deltaSeconds: number) {
@@ -156,6 +199,7 @@ export class Bomb {
 
     if (bounced) {
       this.fuse.setPosition(this.shape.x, this.shape.y);
+      this.directionRing.setPosition(this.shape.x, this.shape.y);
       this.ricochets += 1;
       this.scene.tweens.add({
         targets: this.fuse,
@@ -165,6 +209,73 @@ export class Bomb {
         yoyo: true,
         ease: "Quad.easeOut"
       });
+      this.scene.tweens.add({
+        targets: this.directionRing,
+        scale: 1.45,
+        alpha: 0.7,
+        duration: 70,
+        yoyo: true,
+        ease: "Quad.easeOut",
+        onComplete: () => {
+          this.directionRing.setScale(1);
+          this.applyVisualState();
+        }
+      });
+    }
+  }
+
+  private applyVisualState() {
+    if (this.lastVisualState === this.state) {
+      return;
+    }
+
+    this.lastVisualState = this.state;
+
+    if (this.state === "RETURNING") {
+      this.shape.setStrokeStyle(4, 0x86f7ff, 1);
+      this.fuse.setStrokeStyle(2, 0x86f7ff, 0.8);
+      this.directionRing.setStrokeStyle(2, 0x86f7ff, 0.5);
+      return;
+    }
+
+    if (this.state === "OUTBOUND") {
+      this.shape.setStrokeStyle(4, 0x1b1d22, 1);
+      this.fuse.setStrokeStyle(2, 0xffd240, 0.65);
+      this.directionRing.setStrokeStyle(2, 0xffd240, 0.35);
+      return;
+    }
+
+    this.directionRing.setStrokeStyle(2, 0xffd240, 0);
+  }
+
+  private spawnTrail() {
+    if (this.state === "HELD" || this.scene.time.now < this.nextTrailAt) {
+      return;
+    }
+
+    this.nextTrailAt = this.scene.time.now + 34;
+    const trailDot = this.trail[this.trailIndex];
+    const isReturning = this.state === "RETURNING";
+    trailDot.setPosition(this.shape.x, this.shape.y);
+    trailDot.setFillStyle(isReturning ? 0x86f7ff : 0xffd240, isReturning ? 0.34 : 0.28);
+    trailDot.setScale(isReturning ? 0.9 : 0.78);
+    trailDot.setAlpha(isReturning ? 0.34 : 0.28);
+    trailDot.setVisible(true);
+    this.scene.tweens.killTweensOf(trailDot);
+    this.scene.tweens.add({
+      targets: trailDot,
+      scale: 0.18,
+      alpha: 0,
+      duration: isReturning ? 220 : 180,
+      ease: "Quad.easeOut"
+    });
+    this.trailIndex = (this.trailIndex + 1) % this.trail.length;
+  }
+
+  private clearTrail() {
+    for (const trailDot of this.trail) {
+      this.scene.tweens.killTweensOf(trailDot);
+      trailDot.setAlpha(0);
     }
   }
 }
