@@ -15,6 +15,7 @@ export class Bomb {
   launchedAt = 0;
   ricochets = 0;
   canTransferAt = 0;
+  speedMultiplier = 1;
 
   private readonly scene: Phaser.Scene;
 
@@ -45,6 +46,16 @@ export class Bomb {
     this.ricochets = 0;
     this.canTransferAt = this.scene.time.now + BOMB.transferCooldownMs;
     this.syncHeldPosition();
+    this.setVisible(true);
+  }
+
+  setVisible(isVisible: boolean) {
+    this.shape.setVisible(isVisible);
+    this.fuse.setVisible(isVisible);
+  }
+
+  setIntensity(speedMultiplier: number) {
+    this.speedMultiplier = speedMultiplier;
   }
 
   launch(direction: Phaser.Math.Vector2) {
@@ -54,7 +65,7 @@ export class Bomb {
 
     this.state = "OUTBOUND";
     this.responsible = this.owner;
-    this.velocity.copy(direction.normalize().scale(BOMB.speed));
+    this.velocity.copy(direction.normalize().scale(BOMB.speed * this.speedMultiplier));
     this.launchedAt = this.scene.time.now;
     this.ricochets = 0;
     this.canTransferAt = this.scene.time.now + BOMB.transferCooldownMs;
@@ -110,13 +121,14 @@ export class Bomb {
       return;
     }
 
-    desired.normalize().scale(BOMB.returnSpeed);
+    desired.normalize().scale(BOMB.returnSpeed * this.speedMultiplier);
     const blend = Phaser.Math.Clamp(BOMB.returnTurnRate * deltaSeconds, 0, 0.16);
     this.velocity.x = Phaser.Math.Linear(this.velocity.x, desired.x, blend);
     this.velocity.y = Phaser.Math.Linear(this.velocity.y, desired.y, blend);
 
-    if (this.velocity.length() > BOMB.returnSpeed) {
-      this.velocity.setLength(BOMB.returnSpeed);
+    const maxReturnSpeed = BOMB.returnSpeed * this.speedMultiplier;
+    if (this.velocity.length() > maxReturnSpeed) {
+      this.velocity.setLength(maxReturnSpeed);
     }
   }
 
@@ -153,4 +165,3 @@ export class Bomb {
     }
   }
 }
-

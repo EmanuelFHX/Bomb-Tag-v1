@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { PLAYER } from "../config";
+import { BOT, PLAYER } from "../config";
 
 export type PlayerKind = "human" | "bot";
 
@@ -155,7 +155,7 @@ export class Player {
 
     const now = this.scene.time.now;
     if (now >= this.nextBotDecisionAt) {
-      this.nextBotDecisionAt = now + Phaser.Math.Between(550, 1150);
+      this.nextBotDecisionAt = now + BOT.directionChangeMs + Phaser.Math.Between(-250, 250);
       this.botDirection.set(Phaser.Math.FloatBetween(-1, 1), Phaser.Math.FloatBetween(-1, 1));
       if (this.botDirection.lengthSq() > 0) {
         this.botDirection.normalize();
@@ -163,7 +163,7 @@ export class Player {
     }
 
     this.updateAim(target.x - this.x, target.y - this.y);
-    this.applyMovement(deltaSeconds, this.botDirection, 170);
+    this.applyMovement(deltaSeconds, this.botDirection, BOT.maxSpeed);
     this.updateVisualState();
   }
 
@@ -216,4 +216,3 @@ export class Player {
     this.aim.setAlpha(this.kind === "human" ? 0.9 : 0.38);
   }
 }
-
