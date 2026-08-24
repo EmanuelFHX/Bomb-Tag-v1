@@ -83,6 +83,24 @@ export class AudioSystem {
     this.tickFlip = false;
   }
 
+  playWeaponPickup() {
+    this.unlock();
+    this.beep({ frequency: 760, duration: 0.045, gain: 0.1, type: "sine" });
+    this.beep({ frequency: 1040, duration: 0.06, gain: 0.09, type: "triangle", delay: 0.045 });
+  }
+
+  playWeaponShot() {
+    this.unlock();
+    this.beep({ frequency: 980, duration: 0.04, gain: 0.11, type: "square" });
+    this.beep({ frequency: 420, duration: 0.055, gain: 0.07, type: "triangle", delay: 0.025 });
+  }
+
+  playShotDamage(isHumanTarget: boolean) {
+    this.unlock();
+    this.beep({ frequency: isHumanTarget ? 180 : 520, duration: 0.075, gain: 0.13, type: "sawtooth" });
+    this.beep({ frequency: isHumanTarget ? 130 : 700, duration: 0.085, gain: 0.09, type: "triangle", delay: 0.055 });
+  }
+
   private playDirectHit(byHuman: boolean) {
     const gain = byHuman ? 0.18 : 0.12;
     this.beep({ frequency: 660, duration: 0.075, gain, type: "triangle" });
@@ -147,4 +165,3 @@ export class AudioSystem {
     return this.master;
   }
 }
-

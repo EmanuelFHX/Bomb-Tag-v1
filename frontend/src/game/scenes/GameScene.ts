@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { ARENA, BOMB, BOT, GAME_HEIGHT, GAME_WIDTH, PLAYER, ROUND_STAGES } from "../config";
+import { ARENA, BOMB, BOT, GAME_HEIGHT, GAME_WIDTH, PLAYER, ROUND_STAGES, WEAPON } from "../config";
 import { Bomb } from "../entities/Bomb";
 import { Player } from "../entities/Player";
 import { AudioSystem } from "../systems/AudioSystem";
@@ -24,6 +24,19 @@ type BotIntent = {
 
 type Language = "en" | "pt";
 
+type WeaponPickup = {
+  shape: Phaser.GameObjects.Arc;
+  ring: Phaser.GameObjects.Arc;
+};
+
+type Shot = {
+  owner: Player;
+  shape: Phaser.GameObjects.Rectangle;
+  spark: Phaser.GameObjects.Arc;
+  velocity: Phaser.Math.Vector2;
+  expiresAt: number;
+};
+
 const TEXT = {
   en: {
     humanName: "YOU",
@@ -40,7 +53,7 @@ const TEXT = {
     threePlayers: "3 PLAYERS LEFT\nDASH RECHARGES OVER TIME",
     eliminated: (name: string) => `${name} ELIMINATED`,
     wins: (name: string) => `${name} WINS\nR TO REMATCH`,
-    controls: "WASD move  |  Mouse aim  |  Left click throw  |  Shift/Space dash  |  R rematch",
+    controls: "WASD move  |  Mouse aim  |  Left click throw/shoot  |  Shift/Space dash  |  R rematch",
     language: "EN"
   },
   pt: {
@@ -58,7 +71,7 @@ const TEXT = {
     threePlayers: "3 JOGADORES RESTANTES\nDASH RECARREGA COM O TEMPO",
     eliminated: (name: string) => `${name} ELIMINADO`,
     wins: (name: string) => `${name} VENCEU\nR PARA REVANCHE`,
-    controls: "WASD mover  |  Mouse mirar  |  Clique esquerdo lancar  |  Shift/Espaco dash  |  R revanche",
+    controls: "WASD mover  |  Mouse mirar  |  Clique esquerdo lancar/atirar  |  Shift/Espaco dash  |  R revanche",
     language: "PT"
   }
 } as const;
@@ -99,6 +112,10 @@ export class GameScene extends Phaser.Scene {
   private winner?: Player;
   private nextCriticalPulseAt = 0;
   private botThrowReadyAt = new Map<string, number>();
+  private botShotReadyAt = new Map<string, number>();
+  private weaponPickups: WeaponPickup[] = [];
+  private shots: Shot[] = [];
+  private nextWeaponSpawnAt = 0;
 
   constructor() {
     super("GameScene");
@@ -118,7 +135,7 @@ export class GameScene extends Phaser.Scene {
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.audio.unlock();
       if (pointer.leftButtonDown() && !this.roundResolving && !this.matchOver) {
-        this.bomb.launch(this.human.aimDirection.clone());
+        this.handleHumanAction();
       }
     });
     this.input.keyboard?.on("keydown", () => this.audio.unlock());
@@ -158,6 +175,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.updateBotThrows();
+    this.updateWeapons();
+    this.updateBotWeaponActions();
+    this.updateShots(deltaSeconds);
     this.bomb.update(deltaSeconds, this.arenaRect);
     this.resolveBombHits();
     this.bomb.tryCatchOwner();
@@ -264,6 +284,219 @@ export class GameScene extends Phaser.Scene {
     this.updateHud(true);
   }
 
+  private handleHumanAction() {
+    if (this.bomb.state === "HELD" && this.bomb.owner === this.human) {
+      this.bomb.launch(this.human.aimDirection.clone());
+      return;
+    }
+
+    this.fireWeapon(this.human, this.human.aimDirection.clone());
+  }
+
+  private updateWeapons() {
+    if (this.time.now >= this.nextWeaponSpawnAt && this.weaponPickups.length < WEAPON.maxPickups) {
+      this.spawnWeaponPickup();
+      this.nextWeaponSpawnAt = this.time.now + WEAPON.spawnEveryMs;
+    }
+
+    for (const player of this.getAlivePlayers()) {
+      if (player.hasWeapon) {
+        continue;
+      }
+
+      const pickup = this.weaponPickups.find((item) => (
+        Phaser.Math.Distance.Between(player.x, player.y, item.shape.x, item.shape.y) <= WEAPON.pickupDetectRadius
+      ));
+
+      if (pickup) {
+        player.pickWeapon();
+        this.audio.playWeaponPickup();
+        this.destroyWeaponPickup(pickup);
+      }
+    }
+  }
+
+  private spawnWeaponPickup() {
+    const x = Phaser.Math.Between(
+      Math.ceil(this.arenaRect.left + 72),
+      Math.floor(this.arenaRect.right - 72)
+    );
+    const y = Phaser.Math.Between(
+      Math.ceil(this.arenaRect.top + 72),
+      Math.floor(this.arenaRect.bottom - 72)
+    );
+    const ring = this.add.circle(x, y, WEAPON.pickupRadius + 8, 0x86f7ff, 0.08);
+    ring.setStrokeStyle(2, 0x86f7ff, 0.55);
+    ring.setDepth(1);
+
+    const shape = this.add.circle(x, y, WEAPON.pickupRadius, 0x263442, 1);
+    shape.setStrokeStyle(3, 0x86f7ff, 0.9);
+    shape.setDepth(2);
+
+    this.weaponPickups.push({ shape, ring });
+    this.tweens.add({
+      targets: ring,
+      scale: 1.28,
+      alpha: 0.22,
+      duration: 620,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut"
+    });
+  }
+
+  private updateBotWeaponActions() {
+    for (const bot of this.players) {
+      if (bot.kind !== "bot" || !bot.alive || !bot.hasWeapon || this.bomb.owner === bot) {
+        continue;
+      }
+
+      const target = this.getNearestOpponent(bot);
+      if (!target) {
+        continue;
+      }
+
+      const readyAt = this.botShotReadyAt.get(bot.id) ?? 0;
+      const distance = Phaser.Math.Distance.Between(bot.x, bot.y, target.x, target.y);
+      if (this.time.now < readyAt || distance > WEAPON.botShootRange) {
+        continue;
+      }
+
+      const direction = new Phaser.Math.Vector2(target.x - bot.x, target.y - bot.y);
+      if (direction.lengthSq() === 0) {
+        continue;
+      }
+
+      this.fireWeapon(bot, direction);
+      this.botShotReadyAt.set(bot.id, this.time.now + WEAPON.shotCooldownMs);
+    }
+  }
+
+  private fireWeapon(owner: Player, direction: Phaser.Math.Vector2) {
+    if (!owner.consumeWeapon() || direction.lengthSq() === 0) {
+      return false;
+    }
+
+    const normalized = direction.normalize();
+    const x = owner.x + normalized.x * (PLAYER.radius + 12);
+    const y = owner.y + normalized.y * (PLAYER.radius + 12);
+    const shape = this.add.rectangle(x, y, 30, 8, owner.color, 0.95);
+    shape.setRotation(normalized.angle());
+    shape.setStrokeStyle(1, 0xffffff, owner.kind === "human" ? 0.75 : 0.35);
+    shape.setDepth(4);
+
+    const spark = this.add.circle(x, y, WEAPON.shotRadius + 5, owner.color, 0.22);
+    spark.setDepth(3);
+
+    this.shots.push({
+      owner,
+      shape,
+      spark,
+      velocity: normalized.scale(WEAPON.shotSpeed),
+      expiresAt: this.time.now + WEAPON.shotLifetimeMs
+    });
+    this.audio.playWeaponShot();
+    return true;
+  }
+
+  private updateShots(deltaSeconds: number) {
+    for (const shot of [...this.shots]) {
+      shot.shape.x += shot.velocity.x * deltaSeconds;
+      shot.shape.y += shot.velocity.y * deltaSeconds;
+      shot.spark.setPosition(shot.shape.x, shot.shape.y);
+      shot.spark.setAlpha(0.12 + Math.sin(this.time.now * 0.035) * 0.06);
+
+      if (this.time.now >= shot.expiresAt || !this.arenaRect.contains(shot.shape.x, shot.shape.y)) {
+        this.destroyShot(shot);
+        continue;
+      }
+
+      const target = this.getAlivePlayers().find((player) => {
+        if (player === shot.owner || player.isInvulnerable) {
+          return false;
+        }
+
+        return Phaser.Math.Distance.Between(shot.shape.x, shot.shape.y, player.x, player.y) <= PLAYER.radius + WEAPON.shotRadius;
+      });
+
+      if (!target) {
+        continue;
+      }
+
+      const wasEliminated = target.takeShotDamage();
+      this.audio.playShotDamage(target === this.human);
+      this.playShotImpact(target.x, target.y, shot.owner.color);
+      this.destroyShot(shot);
+
+      if (wasEliminated) {
+        this.resolveShotElimination(target);
+        return;
+      }
+    }
+  }
+
+  private resolveShotElimination(eliminated: Player) {
+    this.roundResolving = true;
+    eliminated.setBombHolder(false);
+    this.bomb.setVisible(false);
+    this.clearWeaponsAndShots();
+    this.cameras.main.shake(150, 0.006);
+    this.playExplosion(eliminated.x, eliminated.y, eliminated.color);
+    this.currentRoundMessageKey = "";
+    this.showRoundMessage(TEXT[this.language].eliminated(this.getPlayerName(eliminated)), "#86f7ff", 1050);
+
+    const alivePlayers = this.getAlivePlayers();
+    if (alivePlayers.length <= 1) {
+      this.time.delayedCall(1250, () => this.endMatch(alivePlayers[0]));
+      return;
+    }
+
+    this.time.delayedCall(1250, () => {
+      this.startRound(alivePlayers.length);
+    });
+  }
+
+  private playShotImpact(x: number, y: number, color: number) {
+    for (let index = 0; index < 8; index += 1) {
+      const angle = (Math.PI * 2 * index) / 8;
+      const shard = this.add.rectangle(x, y, 8, 3, color, 0.9);
+      shard.setRotation(angle);
+      shard.setDepth(6);
+      this.tweens.add({
+        targets: shard,
+        x: x + Math.cos(angle) * 32,
+        y: y + Math.sin(angle) * 32,
+        alpha: 0,
+        duration: 180,
+        ease: "Quad.easeOut",
+        onComplete: () => shard.destroy()
+      });
+    }
+  }
+
+  private clearWeaponsAndShots() {
+    for (const pickup of [...this.weaponPickups]) {
+      this.destroyWeaponPickup(pickup);
+    }
+
+    for (const shot of [...this.shots]) {
+      this.destroyShot(shot);
+    }
+  }
+
+  private destroyWeaponPickup(pickup: WeaponPickup) {
+    this.tweens.killTweensOf(pickup.ring);
+    pickup.shape.destroy();
+    pickup.ring.destroy();
+    this.weaponPickups = this.weaponPickups.filter((item) => item !== pickup);
+  }
+
+  private destroyShot(shot: Shot) {
+    shot.shape.destroy();
+    shot.spark.destroy();
+    this.shots = this.shots.filter((item) => item !== shot);
+  }
+
   private updateBotThrows() {
     if (this.bomb.state !== "HELD" || this.bomb.owner.kind !== "bot") {
       return;
@@ -337,6 +570,7 @@ export class GameScene extends Phaser.Scene {
     eliminated.setEliminated();
     eliminated.setBombHolder(false);
     this.bomb.setVisible(false);
+    this.clearWeaponsAndShots();
     this.roundResolving = true;
     this.cameras.main.shake(180, 0.008);
     this.playExplosion(explosionX, explosionY, eliminated.color);
@@ -412,14 +646,17 @@ export class GameScene extends Phaser.Scene {
     this.roundResolving = false;
     this.roundTimerSeconds = stage.timerSeconds;
     this.roundEndsAt = this.time.now + stage.timerSeconds * 1000;
+    this.nextWeaponSpawnAt = this.time.now + WEAPON.firstSpawnDelayMs;
     this.nextCriticalPulseAt = 0;
     this.dangerOverlay.setAlpha(0);
     this.hudTimer.setScale(1);
     this.audio.resetTimerTicks();
+    this.clearWeaponsAndShots();
     this.createArena(alivePlayers.length);
     for (const player of alivePlayers) {
       player.setDashRechargeEnabled(alivePlayers.length <= 3);
       player.resetDashCharges();
+      player.clearWeapon();
       player.keepInside(this.arenaRect);
     }
     this.bomb.setIntensity(stage.bombSpeedMultiplier);
@@ -723,6 +960,13 @@ export class GameScene extends Phaser.Scene {
         const holder = this.bomb.owner;
         const awayFromHolder = new Phaser.Math.Vector2(bot.x - holder.x, bot.y - holder.y);
         moveDirection.copy(awayFromHolder.lengthSq() > 0 ? awayFromHolder.normalize() : moveDirection);
+        const pickup = this.getNearestWeaponPickup(bot);
+        if (!bot.hasWeapon && pickup) {
+          const holderDistance = Phaser.Math.Distance.Between(bot.x, bot.y, holder.x, holder.y);
+          if (holderDistance > 260) {
+            moveDirection.set(pickup.shape.x - bot.x, pickup.shape.y - bot.y).normalize();
+          }
+        }
       }
 
       return { aimTarget, moveDirection, shouldDash };
@@ -735,6 +979,12 @@ export class GameScene extends Phaser.Scene {
       return { aimTarget, moveDirection, shouldDash };
     }
 
+    const pickup = this.getNearestWeaponPickup(bot);
+    if (!bot.hasWeapon && pickup) {
+      moveDirection.set(pickup.shape.x - bot.x, pickup.shape.y - bot.y).normalize();
+      return { aimTarget, moveDirection, shouldDash };
+    }
+
     if (this.bomb.state === "RETURNING" && this.bomb.owner !== bot) {
       const intercept = this.getReturnInterceptIntent(bot);
       if (intercept.lengthSq() > 0) {
@@ -743,6 +993,18 @@ export class GameScene extends Phaser.Scene {
     }
 
     return { aimTarget, moveDirection, shouldDash };
+  }
+
+  private getNearestWeaponPickup(player: Player) {
+    return this.weaponPickups
+      .filter((pickup) => (
+        Phaser.Math.Distance.Squared(player.x, player.y, pickup.shape.x, pickup.shape.y) <= WEAPON.botSeekRadius ** 2
+      ))
+      .sort((a, b) => {
+        const distanceA = Phaser.Math.Distance.Squared(player.x, player.y, a.shape.x, a.shape.y);
+        const distanceB = Phaser.Math.Distance.Squared(player.x, player.y, b.shape.x, b.shape.y);
+        return distanceA - distanceB;
+      })[0];
   }
 
   private getBombThreat(bot: Player) {

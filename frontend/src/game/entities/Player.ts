@@ -18,13 +18,17 @@ export class Player {
   readonly label: Phaser.GameObjects.Text;
   readonly bombHalo: Phaser.GameObjects.Arc;
   readonly dashWake: Phaser.GameObjects.Ellipse;
+  readonly weaponBadge: Phaser.GameObjects.Rectangle;
 
   velocity = new Phaser.Math.Vector2();
   aimDirection = new Phaser.Math.Vector2(1, 0);
   alive = true;
+  lives: number = PLAYER.maxLives;
+  hasWeapon: boolean = false;
 
   private readonly scene: Phaser.Scene;
   private readonly charges: DashCharge[];
+  private readonly lifePips: Phaser.GameObjects.Arc[] = [];
   private dashUntil = 0;
   private invulnerableUntil = 0;
   private dashRechargeEnabled = true;
@@ -63,6 +67,10 @@ export class Player {
     this.aim = scene.add.rectangle(PLAYER.radius + 14, 0, 34, 5, 0xffffff, 0.82);
     this.aim.setOrigin(0, 0.5);
 
+    this.weaponBadge = scene.add.rectangle(0, PLAYER.radius + 13, 26, 6, 0x86f7ff, 0);
+    this.weaponBadge.setStrokeStyle(1, 0xffffff, 0);
+    this.weaponBadge.setVisible(false);
+
     this.label = scene.add.text(0, -38, name, {
       color: "#f7f8ff",
       fontFamily: "ui-sans-serif, system-ui",
@@ -71,7 +79,21 @@ export class Player {
     });
     this.label.setOrigin(0.5);
 
-    this.container = scene.add.container(x, y, [this.dashWake, this.bombHalo, this.body, this.aim, this.label]);
+    for (let index = 0; index < PLAYER.maxLives; index += 1) {
+      const pip = scene.add.circle(-14 + index * 14, -25, 4, 0xff5d4f, 1);
+      pip.setStrokeStyle(1, 0xffffff, 0.45);
+      this.lifePips.push(pip);
+    }
+
+    this.container = scene.add.container(x, y, [
+      this.dashWake,
+      this.bombHalo,
+      this.body,
+      this.aim,
+      this.weaponBadge,
+      ...this.lifePips,
+      this.label
+    ]);
     this.container.setDepth(3);
 
     for (let index = 0; index < 5; index += 1) {
@@ -117,12 +139,63 @@ export class Player {
     this.bombHalo.setVisible(isHolder);
   }
 
+  pickWeapon() {
+    if (!this.alive) {
+      return;
+    }
+
+    this.hasWeapon = true;
+    this.updateWeaponBadge();
+  }
+
+  consumeWeapon() {
+    if (!this.hasWeapon || !this.alive) {
+      return false;
+    }
+
+    this.hasWeapon = false;
+    this.updateWeaponBadge();
+    return true;
+  }
+
+  clearWeapon() {
+    this.hasWeapon = false;
+    this.updateWeaponBadge();
+  }
+
+  takeShotDamage() {
+    if (!this.alive || this.isInvulnerable) {
+      return false;
+    }
+
+    this.lives = Math.max(0, this.lives - 1);
+    this.updateLifePips();
+    this.scene.tweens.add({
+      targets: this.body,
+      scaleX: 1.35,
+      scaleY: 1.35,
+      alpha: 0.55,
+      duration: 80,
+      yoyo: true,
+      ease: "Quad.easeOut"
+    });
+
+    if (this.lives <= 0) {
+      this.setEliminated();
+      return true;
+    }
+
+    return false;
+  }
+
   setEliminated() {
     this.alive = false;
+    this.hasWeapon = false;
     this.velocity.set(0, 0);
     this.container.setAlpha(0.2);
     this.container.setScale(0.72);
     this.container.setVisible(false);
+    this.updateWeaponBadge();
   }
 
   tryDash(direction: Phaser.Math.Vector2) {
@@ -280,6 +353,20 @@ export class Player {
     const alpha = this.isInvulnerable ? 0.52 : 1;
     this.body.setAlpha(alpha);
     this.aim.setAlpha(this.kind === "human" ? 0.9 : 0.38);
+  }
+
+  private updateLifePips() {
+    for (let index = 0; index < this.lifePips.length; index += 1) {
+      const isActive = index < this.lives;
+      this.lifePips[index].setFillStyle(isActive ? 0xff5d4f : 0x2a2f3a, isActive ? 1 : 0.9);
+      this.lifePips[index].setAlpha(isActive ? 1 : 0.35);
+    }
+  }
+
+  private updateWeaponBadge() {
+    this.weaponBadge.setVisible(this.hasWeapon);
+    this.weaponBadge.setFillStyle(0x86f7ff, this.hasWeapon ? 0.85 : 0);
+    this.weaponBadge.setStrokeStyle(1, 0xffffff, this.hasWeapon ? 0.55 : 0);
   }
 
   private spawnDashAfterimage() {
