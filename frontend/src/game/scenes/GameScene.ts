@@ -52,6 +52,7 @@ const TEXT = {
     playersRemain: (count: number) => `${count} PLAYERS REMAIN`,
     threePlayers: "3 PLAYERS LEFT\n2 RECHARGING DASHES",
     livesRestored: "LIVES RESTORED\n3 LIVES FOR EACH FINALIST",
+    lifeLost: "-1 LIFE",
     eliminated: (name: string) => `${name} ELIMINATED`,
     wins: (name: string) => `${name} WINS\nR TO REMATCH`,
     controls: "WASD move  |  Mouse aim  |  Left click throw/shoot  |  Shift/Space dash  |  R rematch",
@@ -71,6 +72,7 @@ const TEXT = {
     playersRemain: (count: number) => `${count} JOGADORES RESTANTES`,
     threePlayers: "3 JOGADORES RESTANTES\n2 DASHES RECARREGAVEIS",
     livesRestored: "VIDAS RESTAURADAS\n3 VIDAS PARA CADA FINALISTA",
+    lifeLost: "-1 VIDA",
     eliminated: (name: string) => `${name} ELIMINADO`,
     wins: (name: string) => `${name} VENCEU\nR PARA REVANCHE`,
     controls: "WASD mover  |  Mouse mirar  |  Clique esquerdo lancar/atirar  |  Shift/Espaco dash  |  R revanche",
@@ -298,8 +300,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateWeapons() {
-    if (this.time.now >= this.nextWeaponSpawnAt && this.weaponPickups.length < WEAPON.maxPickups) {
-      this.spawnWeaponPickup();
+    const maxPickups = this.getAlivePlayers().length <= 3 ? WEAPON.maxPickupsSpecial : WEAPON.maxPickupsNormal;
+    if (this.time.now >= this.nextWeaponSpawnAt) {
+      if (this.weaponPickups.length < maxPickups) {
+        this.spawnWeaponPickup();
+      }
       this.nextWeaponSpawnAt = this.time.now + WEAPON.spawnEveryMs;
     }
 
@@ -362,12 +367,17 @@ export class GameScene extends Phaser.Scene {
 
       const readyAt = this.botShotReadyAt.get(bot.id) ?? 0;
       const distance = Phaser.Math.Distance.Between(bot.x, bot.y, target.x, target.y);
-      if (this.time.now < readyAt || distance > WEAPON.botShootRange) {
+      if (this.time.now < readyAt || distance < WEAPON.botShootMinRange || distance > WEAPON.botShootRange) {
         continue;
       }
 
       const direction = new Phaser.Math.Vector2(target.x - bot.x, target.y - bot.y);
       if (direction.lengthSq() === 0) {
+        continue;
+      }
+
+      const aimAlignment = bot.aimDirection.dot(direction.clone().normalize());
+      if (aimAlignment < WEAPON.botAimDot) {
         continue;
       }
 
@@ -430,6 +440,7 @@ export class GameScene extends Phaser.Scene {
       const wasEliminated = target.takeShotDamage();
       this.audio.playShotDamage(target === this.human);
       this.playShotImpact(target.x, target.y, shot.owner.color);
+      this.showLifeLostFeedback(target);
       this.destroyShot(shot);
 
       if (wasEliminated) {
@@ -476,6 +487,35 @@ export class GameScene extends Phaser.Scene {
         onComplete: () => shard.destroy()
       });
     }
+  }
+
+  private showLifeLostFeedback(target: Player) {
+    const text = this.add
+      .text(target.x, target.y - 54, TEXT[this.language].lifeLost, {
+        color: "#ff5d4f",
+        fontFamily: "ui-sans-serif, system-ui",
+        fontSize: target === this.human ? "24px" : "18px",
+        fontStyle: "900",
+        stroke: "#0c0f16",
+        strokeThickness: 5
+      })
+      .setOrigin(0.5)
+      .setDepth(12);
+    const slash = this.add.rectangle(target.x, target.y - 28, 46, 5, 0xff5d4f, 0.95);
+    slash.setRotation(-0.18);
+    slash.setDepth(11);
+
+    this.tweens.add({
+      targets: [text, slash],
+      y: "-=34",
+      alpha: 0,
+      duration: 640,
+      ease: "Quad.easeOut",
+      onComplete: () => {
+        text.destroy();
+        slash.destroy();
+      }
+    });
   }
 
   private clearWeaponsAndShots() {

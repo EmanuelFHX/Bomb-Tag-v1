@@ -18,6 +18,7 @@ export class Player {
   readonly label: Phaser.GameObjects.Text;
   readonly bombHalo: Phaser.GameObjects.Arc;
   readonly dashWake: Phaser.GameObjects.Ellipse;
+  readonly weaponAura: Phaser.GameObjects.Arc;
   readonly weaponBadge: Phaser.GameObjects.Rectangle;
 
   velocity = new Phaser.Math.Vector2();
@@ -62,6 +63,10 @@ export class Player {
     this.dashWake = scene.add.ellipse(0, 0, PLAYER.radius * 3.1, PLAYER.radius * 1.35, color, 0);
     this.dashWake.setVisible(false);
 
+    this.weaponAura = scene.add.circle(0, 0, PLAYER.radius + 13, 0x86f7ff, 0);
+    this.weaponAura.setStrokeStyle(3, 0x86f7ff, 0);
+    this.weaponAura.setVisible(false);
+
     this.body = scene.add.circle(0, 0, PLAYER.radius, color, 1);
     this.body.setStrokeStyle(3, 0xffffff, kind === "human" ? 0.9 : 0.35);
 
@@ -89,6 +94,7 @@ export class Player {
     this.container = scene.add.container(x, y, [
       this.dashWake,
       this.bombHalo,
+      this.weaponAura,
       this.body,
       this.aim,
       this.weaponBadge,
@@ -156,6 +162,15 @@ export class Player {
 
     this.hasWeapon = true;
     this.updateWeaponBadge();
+    this.scene.tweens.killTweensOf(this.weaponAura);
+    this.scene.tweens.add({
+      targets: this.weaponAura,
+      scale: 1.18,
+      duration: 180,
+      yoyo: true,
+      ease: "Sine.easeOut",
+      onComplete: () => this.weaponAura.setScale(1)
+    });
   }
 
   consumeWeapon() {
@@ -185,6 +200,15 @@ export class Player {
 
     this.lives = Math.max(0, this.lives - 1);
     this.updateLifePips();
+    for (const pip of this.lifePips) {
+      this.scene.tweens.add({
+        targets: pip,
+        scale: 1.35,
+        duration: 70,
+        yoyo: true,
+        ease: "Quad.easeOut"
+      });
+    }
     this.scene.tweens.add({
       targets: this.body,
       scaleX: 1.35,
@@ -368,6 +392,9 @@ export class Player {
     const alpha = this.isInvulnerable ? 0.52 : 1;
     this.body.setAlpha(alpha);
     this.aim.setAlpha(this.kind === "human" ? 0.9 : 0.38);
+    if (this.hasWeapon) {
+      this.weaponAura.rotation += this.kind === "human" ? 0.045 : 0.026;
+    }
   }
 
   private updateLifePips() {
@@ -380,8 +407,12 @@ export class Player {
 
   private updateWeaponBadge() {
     this.weaponBadge.setVisible(this.hasWeapon);
-    this.weaponBadge.setFillStyle(0x86f7ff, this.hasWeapon ? 0.85 : 0);
-    this.weaponBadge.setStrokeStyle(1, 0xffffff, this.hasWeapon ? 0.55 : 0);
+    this.weaponBadge.setFillStyle(0x86f7ff, this.hasWeapon ? 0.95 : 0);
+    this.weaponBadge.setStrokeStyle(2, 0xffffff, this.hasWeapon ? 0.78 : 0);
+    this.weaponBadge.setScale(this.hasWeapon ? 1.18 : 1);
+    this.weaponAura.setVisible(this.hasWeapon);
+    this.weaponAura.setAlpha(this.hasWeapon ? (this.kind === "human" ? 0.88 : 0.58) : 0);
+    this.weaponAura.setStrokeStyle(3, 0x86f7ff, this.hasWeapon ? (this.kind === "human" ? 0.88 : 0.58) : 0);
   }
 
   private spawnDashAfterimage() {
