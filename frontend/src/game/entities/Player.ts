@@ -148,13 +148,20 @@ export class Player {
     this.updateVisualState();
   }
 
-  updateBot(deltaSeconds: number, target: Player) {
+  updateBot(
+    deltaSeconds: number,
+    aimTarget: Phaser.Math.Vector2,
+    moveDirection: Phaser.Math.Vector2,
+    dashRequested: boolean
+  ) {
     if (!this.alive) {
       return;
     }
 
     const now = this.scene.time.now;
-    if (now >= this.nextBotDecisionAt) {
+    if (moveDirection.lengthSq() > 0) {
+      this.botDirection.copy(moveDirection).normalize();
+    } else if (now >= this.nextBotDecisionAt) {
       this.nextBotDecisionAt = now + BOT.directionChangeMs + Phaser.Math.Between(-250, 250);
       this.botDirection.set(Phaser.Math.FloatBetween(-1, 1), Phaser.Math.FloatBetween(-1, 1));
       if (this.botDirection.lengthSq() > 0) {
@@ -162,7 +169,11 @@ export class Player {
       }
     }
 
-    this.updateAim(target.x - this.x, target.y - this.y);
+    this.updateAim(aimTarget.x - this.x, aimTarget.y - this.y);
+    if (dashRequested) {
+      this.tryDash(this.botDirection.clone());
+    }
+
     this.applyMovement(deltaSeconds, this.botDirection, BOT.maxSpeed);
     this.updateVisualState();
   }

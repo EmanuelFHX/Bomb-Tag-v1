@@ -15,6 +15,12 @@ const PLAYER_COLORS = [
   0xf1f765
 ];
 
+type BotIntent = {
+  aimTarget: Phaser.Math.Vector2;
+  moveDirection: Phaser.Math.Vector2;
+  shouldDash: boolean;
+};
+
 export class GameScene extends Phaser.Scene {
   private inputSystem!: InputSystem;
   private players: Player[] = [];
@@ -38,6 +44,7 @@ export class GameScene extends Phaser.Scene {
   private lastPlayersText = "";
   private lastStageText = "";
   private lastDashText = "";
+  private botThrowReadyAt = new Map<string, number>();
 
   constructor() {
     super("GameScene");
@@ -87,7 +94,8 @@ export class GameScene extends Phaser.Scene {
 
     for (const player of this.players) {
       if (player.kind === "bot") {
-        player.updateBot(deltaSeconds, this.human);
+        const intent = this.getBotIntent(player);
+        player.updateBot(deltaSeconds, intent.aimTarget, intent.moveDirection, intent.shouldDash);
       }
       player.keepInside(this.arenaRect);
     }
@@ -194,11 +202,18 @@ export class GameScene extends Phaser.Scene {
     }
 
     const owner = this.bomb.owner;
-    const distanceToHuman = Phaser.Math.Distance.Between(owner.x, owner.y, this.human.x, this.human.y);
+    const target = this.getNearestOpponent(owner);
+    if (!target) {
+      return;
+    }
+
+    const readyAt = this.botThrowReadyAt.get(owner.id) ?? 0;
+    const distanceToTarget = Phaser.Math.Distance.Between(owner.x, owner.y, target.x, target.y);
     const timeLeft = this.roundEndsAt - this.time.now;
 
-    if (distanceToHuman < 700 || timeLeft < 3500) {
+    if ((distanceToTarget < BOT.throwRange && this.time.now >= readyAt) || timeLeft < 3500) {
       this.bomb.launch(owner.aimDirection.clone());
+      this.botThrowReadyAt.set(owner.id, this.time.now + BOT.throwDelayMs);
     }
   }
 
@@ -401,5 +416,132 @@ export class GameScene extends Phaser.Scene {
 
     this[cacheKey] = value;
     target.setText(value);
+  }
+
+  private getBotIntent(bot: Player): BotIntent {
+    const fallbackTarget = this.getNearestOpponent(bot);
+    const aimTarget = fallbackTarget
+      ? new Phaser.Math.Vector2(fallbackTarget.x, fallbackTarget.y)
+      : new Phaser.Math.Vector2(this.human.x, this.human.y);
+    const moveDirection = new Phaser.Math.Vector2(0, 0);
+    let shouldDash = false;
+
+    if (this.bomb.state === "HELD") {
+      if (this.bomb.owner === bot && fallbackTarget) {
+        const distance = Phaser.Math.Distance.Between(bot.x, bot.y, fallbackTarget.x, fallbackTarget.y);
+        const strafe = this.getPerpendicularTowardCenter(bot, fallbackTarget);
+        const pressure = distance < 260
+          ? new Phaser.Math.Vector2(bot.x - fallbackTarget.x, bot.y - fallbackTarget.y)
+          : new Phaser.Math.Vector2(fallbackTarget.x - bot.x, fallbackTarget.y - bot.y);
+
+        moveDirection.copy(pressure.normalize().scale(0.65).add(strafe.scale(0.35)));
+      } else if (this.bomb.owner && this.bomb.owner !== bot) {
+        const holder = this.bomb.owner;
+        const awayFromHolder = new Phaser.Math.Vector2(bot.x - holder.x, bot.y - holder.y);
+        moveDirection.copy(awayFromHolder.lengthSq() > 0 ? awayFromHolder.normalize() : moveDirection);
+      }
+
+      return { aimTarget, moveDirection, shouldDash };
+    }
+
+    const threat = this.getBombThreat(bot);
+    if (threat.risk > 0) {
+      moveDirection.copy(threat.escapeDirection);
+      shouldDash = threat.risk > 0.78 && bot.dashChargeCount > 0;
+      return { aimTarget, moveDirection, shouldDash };
+    }
+
+    if (this.bomb.state === "RETURNING" && this.bomb.owner !== bot) {
+      const intercept = this.getReturnInterceptIntent(bot);
+      if (intercept.lengthSq() > 0) {
+        moveDirection.copy(intercept);
+      }
+    }
+
+    return { aimTarget, moveDirection, shouldDash };
+  }
+
+  private getBombThreat(bot: Player) {
+    const escapeDirection = new Phaser.Math.Vector2(0, 0);
+    if (this.bomb.state === "HELD" || this.bomb.owner === bot || this.bomb.velocity.lengthSq() === 0) {
+      return { risk: 0, escapeDirection };
+    }
+
+    const fromBombToBot = new Phaser.Math.Vector2(bot.x - this.bomb.x, bot.y - this.bomb.y);
+    const bombDirection = this.bomb.velocity.clone().normalize();
+    const speed = Math.max(this.bomb.velocity.length(), 1);
+    const timeAlongPathMs = (fromBombToBot.dot(bombDirection) / speed) * 1000;
+
+    if (timeAlongPathMs < -120 || timeAlongPathMs > BOT.evadeLookAheadMs) {
+      return { risk: 0, escapeDirection };
+    }
+
+    const closestPoint = new Phaser.Math.Vector2(this.bomb.x, this.bomb.y).add(
+      bombDirection.clone().scale((timeAlongPathMs / 1000) * speed)
+    );
+    const distanceToPath = Phaser.Math.Distance.Between(bot.x, bot.y, closestPoint.x, closestPoint.y);
+    if (distanceToPath > BOT.evadeRadius) {
+      return { risk: 0, escapeDirection };
+    }
+
+    const side = Math.sign(fromBombToBot.cross(bombDirection)) || 1;
+    escapeDirection.set(-bombDirection.y * side, bombDirection.x * side);
+    const centerPull = new Phaser.Math.Vector2(
+      this.arenaRect.centerX - bot.x,
+      this.arenaRect.centerY - bot.y
+    ).normalize();
+    escapeDirection.scale(0.78).add(centerPull.scale(0.22)).normalize();
+
+    const distanceRisk = 1 - distanceToPath / BOT.evadeRadius;
+    const timingRisk = 1 - Math.max(0, timeAlongPathMs) / BOT.evadeLookAheadMs;
+    return { risk: Phaser.Math.Clamp(distanceRisk * 0.7 + timingRisk * 0.3, 0, 1), escapeDirection };
+  }
+
+  private getReturnInterceptIntent(bot: Player) {
+    const owner = this.bomb.owner;
+    const bombToOwner = new Phaser.Math.Vector2(owner.x - this.bomb.x, owner.y - this.bomb.y);
+    const botToBomb = new Phaser.Math.Vector2(this.bomb.x - bot.x, this.bomb.y - bot.y);
+
+    if (bombToOwner.lengthSq() === 0 || botToBomb.length() > 460) {
+      return new Phaser.Math.Vector2(0, 0);
+    }
+
+    const returnDirection = bombToOwner.normalize();
+    const botProjection = new Phaser.Math.Vector2(bot.x - this.bomb.x, bot.y - this.bomb.y).dot(returnDirection);
+    if (botProjection < 0) {
+      return new Phaser.Math.Vector2(0, 0);
+    }
+
+    const closestPoint = new Phaser.Math.Vector2(this.bomb.x, this.bomb.y).add(returnDirection.scale(botProjection));
+    const distanceToReturnPath = Phaser.Math.Distance.Between(bot.x, bot.y, closestPoint.x, closestPoint.y);
+    if (distanceToReturnPath > BOT.interceptRadius) {
+      return new Phaser.Math.Vector2(0, 0);
+    }
+
+    return new Phaser.Math.Vector2(closestPoint.x - bot.x, closestPoint.y - bot.y).normalize();
+  }
+
+  private getNearestOpponent(player: Player) {
+    return this.getAlivePlayers()
+      .filter((candidate) => candidate !== player)
+      .sort((a, b) => {
+        const distanceA = Phaser.Math.Distance.Squared(player.x, player.y, a.x, a.y);
+        const distanceB = Phaser.Math.Distance.Squared(player.x, player.y, b.x, b.y);
+        return distanceA - distanceB;
+      })[0];
+  }
+
+  private getPerpendicularTowardCenter(bot: Player, target: Player) {
+    const toTarget = new Phaser.Math.Vector2(target.x - bot.x, target.y - bot.y).normalize();
+    const perpendicularA = new Phaser.Math.Vector2(-toTarget.y, toTarget.x);
+    const perpendicularB = new Phaser.Math.Vector2(toTarget.y, -toTarget.x);
+    const centerDirection = new Phaser.Math.Vector2(
+      this.arenaRect.centerX - bot.x,
+      this.arenaRect.centerY - bot.y
+    ).normalize();
+
+    return perpendicularA.dot(centerDirection) > perpendicularB.dot(centerDirection)
+      ? perpendicularA
+      : perpendicularB;
   }
 }
