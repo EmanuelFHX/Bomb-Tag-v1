@@ -158,7 +158,7 @@ export class AudioSystem {
 
     if (!this.master) {
       this.master = context.createGain();
-      this.master.gain.value = 0.22;
+      this.master.gain.value = 0.34;
       this.master.connect(context.destination);
     }
 
