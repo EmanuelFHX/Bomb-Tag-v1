@@ -46,6 +46,8 @@ export const BOT = {
   directionChangeMs: 900,
   evadeRadius: 105,
   evadeLookAheadMs: 820,
+  finalHomingEvadeRadius: 158,
+  finalHomingLookAheadMs: 980,
   interceptRadius: 130,
   throwRange: 760,
   throwDelayMs: 420
@@ -65,10 +67,13 @@ export const WEAPON = {
   shotCooldownMs: 1250,
   pickupDetectRadius: 46,
   botSeekRadius: 390,
+  botFinalSeekRadius: 560,
   botShotEvadeRadius: 74,
   botShotLookAheadMs: 620,
   botArmedThreatRange: 520,
+  botFinalArmedThreatRange: 640,
   botArmedLineRadius: 88,
+  botFinalArmedLineRadius: 112,
   botShootMinRange: 170,
   botShootRange: 560,
   botAimDot: 0.92

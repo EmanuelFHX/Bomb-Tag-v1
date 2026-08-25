@@ -83,6 +83,10 @@ export class AudioSystem {
     this.tickFlip = false;
   }
 
+  setVolume(volume: number) {
+    this.getMaster().gain.value = 0.50 * Math.min(1, Math.max(0, volume));
+  }
+
   playWeaponPickup() {
     this.unlock();
     this.beep({ frequency: 760, duration: 0.045, gain: 0.1, type: "sine" });

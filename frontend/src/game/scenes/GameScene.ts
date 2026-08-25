@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { ARENA, BOMB, BOT, GAME_HEIGHT, GAME_WIDTH, PLAYER, ROUND_STAGES, WEAPON } from "../config";
 import { Bomb } from "../entities/Bomb";
 import { Player } from "../entities/Player";
+import { GameSettings, Language, loadSettings, saveSettings } from "../settings";
 import { AudioSystem } from "../systems/AudioSystem";
 import { InputSystem } from "../systems/InputSystem";
 
@@ -21,8 +22,6 @@ type BotIntent = {
   moveDirection: Phaser.Math.Vector2;
   shouldDash: boolean;
 };
-
-type Language = "en" | "pt";
 
 type WeaponPickup = {
   shape: Phaser.GameObjects.Arc;
@@ -125,8 +124,8 @@ export class GameScene extends Phaser.Scene {
   private helpText!: Phaser.GameObjects.Text;
   private languageButton!: Phaser.GameObjects.Container;
   private languageLabel!: Phaser.GameObjects.Text;
-  private skipButton!: Phaser.GameObjects.Container;
-  private skipButtonLabel!: Phaser.GameObjects.Text;
+  private skipButton?: Phaser.GameObjects.Container;
+  private skipButtonLabel?: Phaser.GameObjects.Text;
   private humanLifeHudPips: Phaser.GameObjects.Arc[] = [];
   private scoreboardPanel!: Phaser.GameObjects.Rectangle;
   private scoreboardTitle!: Phaser.GameObjects.Text;
@@ -153,7 +152,9 @@ export class GameScene extends Phaser.Scene {
   private lastStageText = "";
   private lastDashReady = -1;
   private lastDashSlots = -1;
+  private settings: GameSettings = loadSettings();
   private language: Language = "en";
+  private debugMode = false;
   private winner?: Player;
   private nextCriticalPulseAt = 0;
   private botThrowReadyAt = new Map<string, number>();
@@ -173,9 +174,19 @@ export class GameScene extends Phaser.Scene {
     super("GameScene");
   }
 
+  init(settings?: Partial<GameSettings>) {
+    this.settings = {
+      ...loadSettings(),
+      ...settings
+    };
+    this.language = this.settings.language;
+    this.debugMode = this.settings.debugMode;
+  }
+
   create() {
     this.inputSystem = new InputSystem(this);
     this.audio = new AudioSystem();
+    this.audio.setVolume(this.settings.volume);
     this.arenaRect = new Phaser.Geom.Rectangle(ARENA.x, ARENA.y, ARENA.width, ARENA.height);
     this.graphics = this.add.graphics();
     this.createArena(BOT.count + 1);
@@ -367,7 +378,9 @@ export class GameScene extends Phaser.Scene {
       .setVisible(false);
 
     this.createLanguageButton();
-    this.createSkipButton();
+    if (this.debugMode) {
+      this.createSkipButton();
+    }
     this.createScoreboard();
     this.updateHud(true);
   }
@@ -410,13 +423,13 @@ export class GameScene extends Phaser.Scene {
     const music = this.getFinalBattleMusic();
     this.finalBattleMusicPrimed = true;
     music.muted = false;
-    music.volume = 0.04;
+    music.volume = this.getIntroMusicVolume();
     music.currentTime = 0;
-    const fadeIn = () => this.fadeMusic(music, 0.2, 3000);
+    const fadeIn = () => this.fadeMusic(music, this.getTargetMusicVolume(), 3000);
     void music.play().then(fadeIn).catch(() => {
       const resume = () => {
         music.muted = false;
-        music.volume = 0.04;
+        music.volume = this.getIntroMusicVolume();
         music.currentTime = 0;
         void music.play().then(fadeIn);
       };
@@ -433,8 +446,8 @@ export class GameScene extends Phaser.Scene {
     const music = this.getMatchMusic();
     this.matchMusicStarted = true;
     music.muted = false;
-    music.volume = 0.04;
-    void music.play().then(() => this.fadeMusic(music, 0.2, 3000)).catch(() => {
+    music.volume = this.getIntroMusicVolume();
+    void music.play().then(() => this.fadeMusic(music, this.getTargetMusicVolume(), 3000)).catch(() => {
       this.matchMusicStarted = false;
     });
   }
@@ -478,8 +491,16 @@ export class GameScene extends Phaser.Scene {
       this.finalBattleMusicPrimed = true;
     }).catch(() => {
       music.muted = false;
-      music.volume = 0.2;
+      music.volume = this.getTargetMusicVolume();
     });
+  }
+
+  private getIntroMusicVolume() {
+    return 0.04 * this.settings.volume;
+  }
+
+  private getTargetMusicVolume() {
+    return 0.2 * this.settings.volume;
   }
 
   private getFinalBattleMusic() {
@@ -884,10 +905,7 @@ export class GameScene extends Phaser.Scene {
     const pulse = Math.sin(progress * Math.PI * 5);
     const radius = PLAYER.radius + 14 + pulse * 3;
     const color = target === this.human ? 0xff5d4f : 0xffcf33;
-    const lineAlpha = target === this.human ? 0.52 : 0.3;
 
-    graphics.lineStyle(2, color, lineAlpha);
-    graphics.lineBetween(this.bomb.x, this.bomb.y, target.x, target.y);
     graphics.lineStyle(3, color, 0.85);
     graphics.strokeCircle(target.x, target.y, radius);
     graphics.lineStyle(1, 0xffffff, 0.75);
@@ -1493,13 +1511,15 @@ export class GameScene extends Phaser.Scene {
 
   private toggleLanguage() {
     this.language = this.language === "en" ? "pt" : "en";
+    this.settings.language = this.language;
+    saveSettings(this.settings);
     this.human.label.setText(TEXT[this.language].humanName);
     this.lastOwnerText = "";
     this.lastPlayersText = "";
     this.lastStageText = "";
     this.lastDashReady = -1;
     this.lastDashSlots = -1;
-    this.skipButtonLabel.setText(TEXT[this.language].skipToFour);
+    this.skipButtonLabel?.setText(TEXT[this.language].skipToFour);
     this.updateHud(true);
 
     if (this.roundMessage.visible && this.currentRoundMessageKey) {
@@ -1632,6 +1652,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getBotIntent(bot: Player): BotIntent {
+    const isFinalPhase = this.isFinalPhase();
     const fallbackTarget = this.getNearestOpponent(bot);
     const aimTarget = fallbackTarget
       ? new Phaser.Math.Vector2(fallbackTarget.x, fallbackTarget.y)
@@ -1641,7 +1662,7 @@ export class GameScene extends Phaser.Scene {
     const shotThreat = this.getShotThreat(bot);
     if (shotThreat.risk > 0) {
       moveDirection.copy(shotThreat.escapeDirection);
-      shouldDash = shotThreat.risk > 0.82 && bot.dashChargeCount > 0;
+      shouldDash = shotThreat.risk > (isFinalPhase ? 0.88 : 0.82) && bot.dashChargeCount > 0;
       return { aimTarget, moveDirection, shouldDash };
     }
 
@@ -1661,7 +1682,7 @@ export class GameScene extends Phaser.Scene {
         const pickup = this.getNearestWeaponPickup(bot);
         if (!bot.hasWeapon && pickup) {
           const holderDistance = Phaser.Math.Distance.Between(bot.x, bot.y, holder.x, holder.y);
-          if (holderDistance > 260) {
+          if (holderDistance > (isFinalPhase ? 190 : 260)) {
             moveDirection.set(pickup.shape.x - bot.x, pickup.shape.y - bot.y).normalize();
           }
         }
@@ -1673,14 +1694,14 @@ export class GameScene extends Phaser.Scene {
     const threat = this.getBombThreat(bot);
     if (threat.risk > 0) {
       moveDirection.copy(threat.escapeDirection);
-      shouldDash = threat.risk > 0.78 && bot.dashChargeCount > 0;
+      shouldDash = threat.risk > (isFinalPhase ? 0.86 : 0.78) && bot.dashChargeCount > 0;
       return { aimTarget, moveDirection, shouldDash };
     }
 
     const armedThreat = this.getArmedOpponentThreat(bot);
     if (armedThreat.risk > 0) {
       moveDirection.copy(armedThreat.escapeDirection);
-      shouldDash = armedThreat.risk > 0.84 && bot.dashChargeCount > 0;
+      shouldDash = armedThreat.risk > (isFinalPhase ? 0.9 : 0.84) && bot.dashChargeCount > 0;
       return { aimTarget, moveDirection, shouldDash };
     }
 
@@ -1701,9 +1722,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getNearestWeaponPickup(player: Player) {
+    const seekRadius = this.isFinalPhase() ? WEAPON.botFinalSeekRadius : WEAPON.botSeekRadius;
     return this.weaponPickups
       .filter((pickup) => (
-        Phaser.Math.Distance.Squared(player.x, player.y, pickup.shape.x, pickup.shape.y) <= WEAPON.botSeekRadius ** 2
+        Phaser.Math.Distance.Squared(player.x, player.y, pickup.shape.x, pickup.shape.y) <= seekRadius ** 2
       ))
       .sort((a, b) => {
         const distanceA = Phaser.Math.Distance.Squared(player.x, player.y, a.shape.x, a.shape.y);
@@ -1761,6 +1783,8 @@ export class GameScene extends Phaser.Scene {
   private getArmedOpponentThreat(bot: Player) {
     const escapeDirection = new Phaser.Math.Vector2(0, 0);
     let highestRisk = 0;
+    const threatRange = this.isFinalPhase() ? WEAPON.botFinalArmedThreatRange : WEAPON.botArmedThreatRange;
+    const lineRadius = this.isFinalPhase() ? WEAPON.botFinalArmedLineRadius : WEAPON.botArmedLineRadius;
 
     for (const opponent of this.getAlivePlayers()) {
       if (opponent === bot || !opponent.hasWeapon) {
@@ -1769,7 +1793,7 @@ export class GameScene extends Phaser.Scene {
 
       const fromOpponentToBot = new Phaser.Math.Vector2(bot.x - opponent.x, bot.y - opponent.y);
       const distance = fromOpponentToBot.length();
-      if (distance <= 0 || distance > WEAPON.botArmedThreatRange) {
+      if (distance <= 0 || distance > threatRange) {
         continue;
       }
 
@@ -1781,7 +1805,7 @@ export class GameScene extends Phaser.Scene {
 
       const closestPoint = new Phaser.Math.Vector2(opponent.x, opponent.y).add(aimDirection.clone().scale(projection));
       const distanceToLine = Phaser.Math.Distance.Between(bot.x, bot.y, closestPoint.x, closestPoint.y);
-      if (distanceToLine > WEAPON.botArmedLineRadius) {
+      if (distanceToLine > lineRadius) {
         continue;
       }
 
@@ -1790,9 +1814,9 @@ export class GameScene extends Phaser.Scene {
       const away = fromOpponentToBot.normalize();
       candidate.scale(0.74).add(away.scale(0.26)).normalize();
 
-      const lineRisk = 1 - distanceToLine / WEAPON.botArmedLineRadius;
-      const rangeRisk = 1 - distance / WEAPON.botArmedThreatRange;
-      const risk = Phaser.Math.Clamp(lineRisk * 0.72 + rangeRisk * 0.28, 0, 1);
+      const lineRisk = 1 - distanceToLine / lineRadius;
+      const rangeRisk = 1 - distance / threatRange;
+      const risk = Phaser.Math.Clamp((lineRisk * 0.72 + rangeRisk * 0.28) * this.getBotAwareness(bot), 0, 1);
       if (risk > highestRisk) {
         highestRisk = risk;
         escapeDirection.copy(candidate);
@@ -1808,12 +1832,17 @@ export class GameScene extends Phaser.Scene {
       return { risk: 0, escapeDirection };
     }
 
+    const isFinalHomingTarget = this.isFinalPhase() && this.bomb.homingTarget === bot && this.bomb.state === "OUTBOUND";
+    const evadeRadius = isFinalHomingTarget ? BOT.finalHomingEvadeRadius : BOT.evadeRadius;
+    const lookAheadMs = isFinalHomingTarget ? BOT.finalHomingLookAheadMs : BOT.evadeLookAheadMs;
     const fromBombToBot = new Phaser.Math.Vector2(bot.x - this.bomb.x, bot.y - this.bomb.y);
     const bombDirection = this.bomb.velocity.clone().normalize();
     const speed = Math.max(this.bomb.velocity.length(), 1);
     const timeAlongPathMs = (fromBombToBot.dot(bombDirection) / speed) * 1000;
+    const awareness = this.getBotAwareness(bot);
+    const reactionLimitMs = lookAheadMs * awareness;
 
-    if (timeAlongPathMs < -120 || timeAlongPathMs > BOT.evadeLookAheadMs) {
+    if (timeAlongPathMs < -120 || timeAlongPathMs > reactionLimitMs) {
       return { risk: 0, escapeDirection };
     }
 
@@ -1821,21 +1850,29 @@ export class GameScene extends Phaser.Scene {
       bombDirection.clone().scale((timeAlongPathMs / 1000) * speed)
     );
     const distanceToPath = Phaser.Math.Distance.Between(bot.x, bot.y, closestPoint.x, closestPoint.y);
-    if (distanceToPath > BOT.evadeRadius) {
+    if (distanceToPath > evadeRadius) {
       return { risk: 0, escapeDirection };
     }
 
     const side = Math.sign(fromBombToBot.cross(bombDirection)) || 1;
     escapeDirection.set(-bombDirection.y * side, bombDirection.x * side);
+    if (isFinalHomingTarget) {
+      const awayFromBomb = fromBombToBot.clone().normalize();
+      escapeDirection.scale(0.72).add(awayFromBomb.scale(0.28)).normalize();
+    }
     const centerPull = new Phaser.Math.Vector2(
       this.arenaRect.centerX - bot.x,
       this.arenaRect.centerY - bot.y
     ).normalize();
-    escapeDirection.scale(0.78).add(centerPull.scale(0.22)).normalize();
+    escapeDirection.scale(isFinalHomingTarget ? 0.7 : 0.78).add(centerPull.scale(isFinalHomingTarget ? 0.3 : 0.22)).normalize();
 
-    const distanceRisk = 1 - distanceToPath / BOT.evadeRadius;
-    const timingRisk = 1 - Math.max(0, timeAlongPathMs) / BOT.evadeLookAheadMs;
-    return { risk: Phaser.Math.Clamp(distanceRisk * 0.7 + timingRisk * 0.3, 0, 1), escapeDirection };
+    const distanceRisk = 1 - distanceToPath / evadeRadius;
+    const timingRisk = 1 - Math.max(0, timeAlongPathMs) / lookAheadMs;
+    const homingPressure = isFinalHomingTarget ? 0.16 : 0;
+    return {
+      risk: Phaser.Math.Clamp((distanceRisk * 0.66 + timingRisk * 0.34 + homingPressure) * awareness, 0, 1),
+      escapeDirection
+    };
   }
 
   private getReturnInterceptIntent(bot: Player) {
@@ -1870,6 +1907,11 @@ export class GameScene extends Phaser.Scene {
         const distanceB = Phaser.Math.Distance.Squared(player.x, player.y, b.x, b.y);
         return distanceA - distanceB;
       })[0];
+  }
+
+  private getBotAwareness(bot: Player) {
+    const seed = bot.id.split("").reduce((total, char) => total + char.charCodeAt(0), 0);
+    return 0.82 + (seed % 5) * 0.045;
   }
 
   private getSpecialBombTarget(owner: Player, direction: Phaser.Math.Vector2) {
