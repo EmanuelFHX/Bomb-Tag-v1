@@ -1,5 +1,5 @@
 import { child, onDisconnect, onValue, ref, serverTimestamp, set, update, type Unsubscribe } from "firebase/database";
-import { getFirebaseDatabase } from "./firebaseClient";
+import { getFirebaseDatabase, prepareFirebaseConnection } from "./firebaseClient";
 import type { OnlineMatchState, OnlinePlayerSnapshot, OnlineRoomSnapshot } from "./onlineTypes";
 
 type OnlineRoomClientOptions = {
@@ -8,7 +8,11 @@ type OnlineRoomClientOptions = {
   playerName: string;
   playerColor: number;
   isHost: boolean;
+  onError: () => void;
 };
+
+const PLAYER_WRITE_INTERVAL_MS = 66;
+const MATCH_WRITE_INTERVAL_MS = 66;
 
 export class OnlineRoomClient {
   private readonly roomCode: string;
@@ -16,7 +20,9 @@ export class OnlineRoomClient {
   private readonly playerName: string;
   private readonly playerColor: number;
   private readonly isHost: boolean;
+  private readonly onError: () => void;
   private unsubscribe?: Unsubscribe;
+  private unsubscribeMatch?: Unsubscribe;
   private lastWriteAt = 0;
   private lastMatchWriteAt = 0;
 
@@ -26,10 +32,11 @@ export class OnlineRoomClient {
     this.playerName = options.playerName;
     this.playerColor = options.playerColor;
     this.isHost = options.isHost;
+    this.onError = options.onError;
   }
 
-  async connect(onRoom: (room: OnlineRoomSnapshot | null) => void) {
-    const database = getFirebaseDatabase();
+  async connect(onRoom: (room: OnlineRoomSnapshot | null) => void, initialMatch?: OnlineMatchState) {
+    const database = await prepareFirebaseConnection();
     if (!database) {
       throw new Error("Firebase config missing");
     }
@@ -48,68 +55,130 @@ export class OnlineRoomClient {
     }
 
     await set(playerRef, this.createBaseSnapshot());
-    await onDisconnect(playerRef).remove();
+    void onDisconnect(playerRef).remove().catch(() => undefined);
 
-    this.unsubscribe = onValue(roomRef, (snapshot) => {
-      onRoom(snapshot.val() as OnlineRoomSnapshot | null);
-    });
+    if (this.isHost && initialMatch) {
+      await set(child(roomRef, "match"), {
+        ...initialMatch,
+        updatedAt: Date.now()
+      });
+    }
+
+    const listenRef = child(roomRef, "players");
+    this.unsubscribe = onValue(
+      listenRef,
+      (snapshot) => {
+        if (this.isHost) {
+          onRoom({
+            code: this.roomCode,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            status: "playing",
+            hostId: this.playerId,
+            players: snapshot.val() as OnlineRoomSnapshot["players"]
+          });
+          return;
+        }
+
+        onRoom({
+          code: this.roomCode,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          status: "playing",
+          hostId: "",
+          players: snapshot.val() as OnlineRoomSnapshot["players"]
+        });
+      },
+      () => this.onError()
+    );
+
+    if (!this.isHost) {
+      this.unsubscribeMatch = onValue(
+        child(roomRef, "match"),
+        (snapshot) => {
+          const match = snapshot.val() as OnlineRoomSnapshot["match"] | null;
+          if (!match) {
+            return;
+          }
+
+          onRoom({
+            code: this.roomCode,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            status: "playing",
+            hostId: "",
+            players: {},
+            match
+          });
+        },
+        () => this.onError()
+      );
+    }
   }
 
   updatePlayer(snapshot: Omit<OnlinePlayerSnapshot, "id" | "name" | "color" | "updatedAt">) {
     const now = performance.now();
-    if (now - this.lastWriteAt < 90) {
-      return;
+    if (now - this.lastWriteAt < PLAYER_WRITE_INTERVAL_MS) {
+      return true;
     }
 
     this.lastWriteAt = now;
     const database = getFirebaseDatabase();
     if (!database) {
-      return;
+      return false;
     }
 
-    const playerRef = ref(database, `rooms/${this.roomCode}/players/${this.playerId}`);
-    void update(playerRef, {
-      ...snapshot,
-      id: this.playerId,
-      name: this.playerName,
-      color: this.playerColor,
-      updatedAt: serverTimestamp()
-    });
+    try {
+      const playerRef = ref(database, `rooms/${this.roomCode}/players/${this.playerId}`);
+      void update(playerRef, {
+        ...snapshot,
+        id: this.playerId,
+        name: this.playerName,
+        color: this.playerColor,
+        updatedAt: serverTimestamp()
+      }).catch(() => this.onError());
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  updateMatchState(match: OnlineMatchState) {
+  updateMatchState(match: OnlineMatchState, force = false) {
     if (!this.isHost) {
-      return;
+      return true;
     }
 
     const now = performance.now();
-    if (now - this.lastMatchWriteAt < 80) {
-      return;
+    if (!force && now - this.lastMatchWriteAt < MATCH_WRITE_INTERVAL_MS) {
+      return true;
     }
 
     this.lastMatchWriteAt = now;
     const database = getFirebaseDatabase();
     if (!database) {
-      return;
+      return false;
     }
 
-    void set(ref(database, `rooms/${this.roomCode}/match`), {
-      ...match,
-      updatedAt: serverTimestamp()
-    });
-    void update(ref(database, `rooms/${this.roomCode}`), {
-      updatedAt: serverTimestamp()
-    });
+    try {
+      void set(ref(database, `rooms/${this.roomCode}/match`), {
+        ...match,
+        updatedAt: Date.now()
+      }).catch(() => this.onError());
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   disconnect() {
     this.unsubscribe?.();
+    this.unsubscribeMatch?.();
     const database = getFirebaseDatabase();
     if (!database) {
       return;
     }
 
-    void set(ref(database, `rooms/${this.roomCode}/players/${this.playerId}`), null);
+    void set(ref(database, `rooms/${this.roomCode}/players/${this.playerId}`), null).catch(() => undefined);
   }
 
   private createBaseSnapshot(): OnlinePlayerSnapshot {
@@ -119,6 +188,8 @@ export class OnlineRoomClient {
       color: this.playerColor,
       x: 0,
       y: 0,
+      velocityX: 0,
+      velocityY: 0,
       aimX: 1,
       aimY: 0,
       alive: true,

@@ -75,10 +75,51 @@ export class MenuScene extends Phaser.Scene {
 
   create() {
     this.settings = loadSettings();
+    if (this.startFromUrlParams()) {
+      return;
+    }
+
     this.drawBackground();
     this.createTitle();
     this.createControls();
     this.refreshText();
+  }
+
+  private startFromUrlParams() {
+    const params = new URLSearchParams(window.location.search);
+    const role = params.get("onlineRole");
+    if (role !== "host" && role !== "guest") {
+      return false;
+    }
+
+    const roomCode = (params.get("room") || this.createRoomCode()).trim().toUpperCase();
+    if (!roomCode) {
+      return false;
+    }
+
+    const debugFromUrl = params.get("debug") === "1";
+    const runtimeSettings = {
+      ...this.settings,
+      debugMode: debugFromUrl || this.settings.debugMode,
+      online: {
+        enabled: true,
+        role,
+        roomCode,
+        playerId: createPlayerId()
+      }
+    };
+    this.settings.online = {
+      enabled: true,
+      role,
+      roomCode,
+      playerId: runtimeSettings.online.playerId
+    };
+    if (debugFromUrl) {
+      this.settings.debugMode = false;
+    }
+    saveSettings(this.settings);
+    this.scene.start("GameScene", runtimeSettings);
+    return true;
   }
 
   private drawBackground() {
