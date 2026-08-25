@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { BootScene } from "./game/scenes/BootScene";
 import { GameScene } from "./game/scenes/GameScene";
+import { MenuScene } from "./game/scenes/MenuScene";
 import "./ui/styles.css";
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -21,7 +22,7 @@ const config: Phaser.Types.Core.GameConfig = {
     width: 1280,
     height: 720
   },
-  scene: [BootScene, GameScene],
+  scene: [BootScene, MenuScene, GameScene],
   physics: {
     default: "arcade",
     arcade: {
