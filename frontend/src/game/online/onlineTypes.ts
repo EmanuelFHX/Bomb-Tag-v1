@@ -4,6 +4,8 @@ export type OnlinePlayerSnapshot = {
   color: number;
   x: number;
   y: number;
+  velocityX: number;
+  velocityY: number;
   aimX: number;
   aimY: number;
   alive: boolean;
@@ -18,6 +20,8 @@ export type OnlineMatchPlayerState = {
   color: number;
   x: number;
   y: number;
+  velocityX: number;
+  velocityY: number;
   aimX: number;
   aimY: number;
   alive: boolean;
@@ -34,7 +38,36 @@ export type OnlineMatchBombState = {
   responsibleId: string;
   velocityX: number;
   velocityY: number;
+  speedMultiplier: number;
+  homingTargetId: string | null;
   visible: boolean;
+};
+
+export type OnlineArenaState = {
+  aliveCount: number;
+  shape: "rectangle" | "octagon";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type OnlineShotState = {
+  id: string;
+  ownerId: string;
+  x: number;
+  y: number;
+  rotation: number;
+  color: number;
+  velocityX: number;
+  velocityY: number;
+  remainingMs: number;
+};
+
+export type OnlineWeaponPickupState = {
+  id: string;
+  x: number;
+  y: number;
 };
 
 export type OnlineMatchRoundState = {
@@ -43,13 +76,70 @@ export type OnlineMatchRoundState = {
   timerSeconds: number;
   resolving: boolean;
   matchOver: boolean;
+  specialLivesRestored: boolean;
   winnerId: string | null;
+};
+
+export type OnlineMusicState = "none" | "match" | "final";
+
+export type OnlineCombatEventDraft =
+  | {
+      type: "bombHit";
+      x: number;
+      y: number;
+      color: number;
+      variant: "direct" | "you" | "ricochet" | "return" | "perfect";
+      isSpecial: boolean;
+      nextOwnerId: string;
+    }
+  | {
+      type: "weaponPickup";
+      playerId: string;
+    }
+  | {
+      type: "weaponShot";
+      ownerId: string;
+      shot: OnlineShotState;
+    }
+  | {
+      type: "shotDamage";
+      x: number;
+      y: number;
+      color: number;
+      targetId: string;
+      isHumanTarget: boolean;
+    }
+  | {
+      type: "explosion";
+      x: number;
+      y: number;
+      color: number;
+    }
+  | {
+      type: "finalTransition";
+      aliveCount: number;
+    }
+  | {
+      type: "roundMessage";
+      message: string;
+      color: string;
+      duration: number;
+      key: "playersRemain" | "threePlayers" | "livesRestored" | "finalDuel" | "matchOver" | "";
+    };
+
+export type OnlineCombatEvent = OnlineCombatEventDraft & {
+  id: string;
 };
 
 export type OnlineMatchState = {
   updatedAt: number;
+  music: OnlineMusicState;
+  events: OnlineCombatEvent[];
   players: OnlineMatchPlayerState[];
   bomb: OnlineMatchBombState;
+  arena: OnlineArenaState;
+  shots: OnlineShotState[];
+  pickups?: OnlineWeaponPickupState[];
   round: OnlineMatchRoundState;
 };
 

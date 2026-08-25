@@ -2,8 +2,8 @@
   "rules": {
     "rooms": {
       "$room": {
-        ".read": true,
-        ".write": true,
+        ".read": "auth != null",
+        ".write": "auth != null",
         ".indexOn": ["updatedAt"]
       }
     }

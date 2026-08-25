@@ -10,6 +10,8 @@ type HitSoundContext = {
   human: Player;
 };
 
+export type HitSoundVariant = "direct" | "you" | "ricochet" | "return" | "perfect";
+
 type BeepOptions = {
   frequency: number;
   duration: number;
@@ -34,27 +36,53 @@ export class AudioSystem {
   playHit(context: HitSoundContext) {
     this.unlock();
 
-    if (context.remainingSeconds < 1) {
+    this.playHitVariant(this.getHitVariant(context), context.previousOwner === context.human);
+  }
+
+  playHitVariant(variant: HitSoundVariant, byHuman = false) {
+    this.unlock();
+
+    if (variant === "perfect") {
       this.playPerfectHit();
       return;
     }
 
-    if (context.nextOwner === context.human) {
+    if (variant === "you") {
       this.playYouWereHit();
       return;
     }
 
-    if (context.bombState === "RETURNING") {
+    if (variant === "return") {
       this.playReturnHit();
       return;
     }
 
-    if (context.ricochets > 0) {
+    if (variant === "ricochet") {
       this.playRicochetHit();
       return;
     }
 
-    this.playDirectHit(context.previousOwner === context.human);
+    this.playDirectHit(byHuman);
+  }
+
+  getHitVariant(context: HitSoundContext): HitSoundVariant {
+    if (context.remainingSeconds < 1) {
+      return "perfect";
+    }
+
+    if (context.nextOwner === context.human) {
+      return "you";
+    }
+
+    if (context.bombState === "RETURNING") {
+      return "return";
+    }
+
+    if (context.ricochets > 0) {
+      return "ricochet";
+    }
+
+    return "direct";
   }
 
   updateTimer(remainingSeconds: number, isActive: boolean) {

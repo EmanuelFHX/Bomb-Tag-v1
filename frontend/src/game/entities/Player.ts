@@ -155,13 +155,32 @@ export class Player {
     this.bombHalo.setVisible(isHolder);
   }
 
-  pickWeapon() {
-    if (!this.alive) {
+  setLives(lives: number, shouldPulse = false) {
+    this.lives = Phaser.Math.Clamp(lives, 0, PLAYER.maxLives);
+    this.updateLifePips();
+    if (!shouldPulse) {
       return;
     }
 
-    this.hasWeapon = true;
+    for (const pip of this.lifePips) {
+      this.scene.tweens.add({
+        targets: pip,
+        scale: 1.35,
+        duration: 70,
+        yoyo: true,
+        ease: "Quad.easeOut"
+      });
+    }
+  }
+
+  setWeaponEquipped(hasWeapon: boolean, shouldPulse = false) {
+    const changed = this.hasWeapon !== hasWeapon;
+    this.hasWeapon = hasWeapon;
     this.updateWeaponBadge();
+    if (!shouldPulse || !changed || !hasWeapon) {
+      return;
+    }
+
     this.scene.tweens.killTweensOf(this.weaponAura);
     this.scene.tweens.add({
       targets: this.weaponAura,
@@ -173,24 +192,29 @@ export class Player {
     });
   }
 
+  pickWeapon() {
+    if (!this.alive) {
+      return;
+    }
+
+    this.setWeaponEquipped(true, true);
+  }
+
   consumeWeapon() {
     if (!this.hasWeapon || !this.alive) {
       return false;
     }
 
-    this.hasWeapon = false;
-    this.updateWeaponBadge();
+    this.setWeaponEquipped(false);
     return true;
   }
 
   clearWeapon() {
-    this.hasWeapon = false;
-    this.updateWeaponBadge();
+    this.setWeaponEquipped(false);
   }
 
   restoreLives() {
-    this.lives = PLAYER.maxLives;
-    this.updateLifePips();
+    this.setLives(PLAYER.maxLives);
   }
 
   takeShotDamage(ignoreInvulnerability = false) {
@@ -198,17 +222,7 @@ export class Player {
       return false;
     }
 
-    this.lives = Math.max(0, this.lives - 1);
-    this.updateLifePips();
-    for (const pip of this.lifePips) {
-      this.scene.tweens.add({
-        targets: pip,
-        scale: 1.35,
-        duration: 70,
-        yoyo: true,
-        ease: "Quad.easeOut"
-      });
-    }
+    this.setLives(this.lives - 1, true);
     this.scene.tweens.add({
       targets: this.body,
       scaleX: 1.35,

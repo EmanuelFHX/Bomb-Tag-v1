@@ -10,7 +10,10 @@ const config: Phaser.Types.Core.GameConfig = {
   backgroundColor: "#15171d",
   fps: {
     target: 60,
-    min: 30
+    min: 30,
+    forceSetTimeOut: true,
+    smoothStep: false,
+    panicMax: 30
   },
   render: {
     antialias: false,
