@@ -2,6 +2,8 @@ import Phaser from "phaser";
 import { ARENA, BOMB, BOT, GAME_HEIGHT, GAME_WIDTH, PLAYER, ROUND_STAGES, WEAPON } from "../config";
 import { Bomb } from "../entities/Bomb";
 import { Player } from "../entities/Player";
+import { OnlineRoomClient } from "../online/OnlineRoomClient";
+import type { OnlineMatchPlayerState, OnlineMatchState, OnlinePlayerSnapshot, OnlineRoomSnapshot } from "../online/onlineTypes";
 import { GameSettings, Language, loadSettings, saveSettings } from "../settings";
 import { AudioSystem } from "../systems/AudioSystem";
 import { InputSystem } from "../systems/InputSystem";
@@ -42,6 +44,14 @@ type ScoreboardRow = {
   name: Phaser.GameObjects.Text;
   lives: Phaser.GameObjects.Arc[];
   status: Phaser.GameObjects.Text;
+};
+
+type RemoteAvatar = {
+  container: Phaser.GameObjects.Container;
+  body: Phaser.GameObjects.Arc;
+  aim: Phaser.GameObjects.Rectangle;
+  label: Phaser.GameObjects.Text;
+  weaponBadge: Phaser.GameObjects.Rectangle;
 };
 
 const TEXT = {
@@ -122,6 +132,7 @@ export class GameScene extends Phaser.Scene {
   private hudLivesLabel!: Phaser.GameObjects.Text;
   private hudDashLabel!: Phaser.GameObjects.Text;
   private helpText!: Phaser.GameObjects.Text;
+  private onlineStatusText!: Phaser.GameObjects.Text;
   private languageButton!: Phaser.GameObjects.Container;
   private languageLabel!: Phaser.GameObjects.Text;
   private skipButton?: Phaser.GameObjects.Container;
@@ -169,6 +180,9 @@ export class GameScene extends Phaser.Scene {
   private matchMusicStarted = false;
   private finalBattleMusic?: HTMLAudioElement;
   private finalBattleMusicPrimed = false;
+  private onlineClient?: OnlineRoomClient;
+  private remoteAvatars = new Map<string, RemoteAvatar>();
+  private latestOnlineMatch?: OnlineMatchState;
 
   constructor() {
     super("GameScene");
@@ -194,12 +208,13 @@ export class GameScene extends Phaser.Scene {
     this.bomb = new Bomb(this, this.human);
     this.createHud();
     this.startRound(BOT.count + 1);
+    this.connectOnlineRoom();
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.audio.unlock();
       this.startMatchMusic();
       this.primeFinalBattleMusic();
-      if (pointer.leftButtonDown() && !this.roundResolving && !this.matchOver) {
+      if (pointer.leftButtonDown() && !this.isOnlineGuest() && !this.roundResolving && !this.matchOver) {
         this.handleHumanAction();
       }
     });
@@ -211,10 +226,16 @@ export class GameScene extends Phaser.Scene {
     this.events.once("shutdown", () => {
       this.matchMusic?.pause();
       this.finalBattleMusic?.pause();
+      this.onlineClient?.disconnect();
     });
   }
 
   update(_time: number, delta: number) {
+    if (this.isOnlineGuest()) {
+      this.updateGuestOnlineView();
+      return;
+    }
+
     if (this.matchOver) {
       if (this.inputSystem.consumeRestartPressed()) {
         this.scene.restart();
@@ -256,6 +277,8 @@ export class GameScene extends Phaser.Scene {
     this.updateShots(deltaSeconds);
     this.bomb.update(deltaSeconds, this.arenaRect, this.arenaPolygon, this.arenaPolygonCenter);
     this.updateHomingIndicator();
+    this.syncOnlinePlayer();
+    this.syncOnlineMatchState();
     this.resolveBombHits();
     this.resolveSpecialCatchMiss();
     this.bomb.tryCatchOwner();
@@ -357,6 +380,12 @@ export class GameScene extends Phaser.Scene {
         fontSize: "14px"
       }
     );
+    this.onlineStatusText = this.add.text(GAME_WIDTH - 332, GAME_HEIGHT - 34, "", {
+      color: "#86f7ff",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "14px",
+      fontStyle: "800"
+    });
 
     this.dangerOverlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0xff2f2f, 0);
     this.dangerOverlay.setDepth(8);
@@ -517,6 +546,227 @@ export class GameScene extends Phaser.Scene {
     this.matchMusic.preload = "auto";
     this.matchMusic.crossOrigin = "anonymous";
     return this.matchMusic;
+  }
+
+  private connectOnlineRoom() {
+    const online = this.settings.online;
+    if (!online.enabled || !online.roomCode) {
+      this.onlineStatusText.setText("");
+      return;
+    }
+
+    this.onlineStatusText.setText(`ONLINE ${online.roomCode}`);
+    this.onlineClient = new OnlineRoomClient({
+      roomCode: online.roomCode,
+      playerId: online.playerId,
+      playerName: this.getPlayerName(this.human),
+      playerColor: this.human.color,
+      isHost: online.role === "host"
+    });
+
+    void this.onlineClient.connect((room) => this.applyOnlineRoom(room)).catch(() => {
+      this.onlineStatusText.setText("ONLINE OFF");
+      this.onlineClient = undefined;
+    });
+  }
+
+  private syncOnlinePlayer() {
+    if (!this.onlineClient) {
+      return;
+    }
+
+    this.onlineClient.updatePlayer({
+      x: Math.round(this.human.x),
+      y: Math.round(this.human.y),
+      aimX: Number(this.human.aimDirection.x.toFixed(3)),
+      aimY: Number(this.human.aimDirection.y.toFixed(3)),
+      alive: this.human.alive,
+      hasBomb: this.bomb.owner === this.human,
+      hasWeapon: this.human.hasWeapon
+    });
+  }
+
+  private syncOnlineMatchState() {
+    if (!this.onlineClient || this.settings.online.role !== "host") {
+      return;
+    }
+
+    this.onlineClient.updateMatchState(this.createOnlineMatchState());
+  }
+
+  private createOnlineMatchState(): OnlineMatchState {
+    return {
+      updatedAt: Date.now(),
+      players: this.players.map((player) => ({
+        id: player.id,
+        name: this.getPlayerName(player),
+        color: player.color,
+        x: Math.round(player.x),
+        y: Math.round(player.y),
+        aimX: Number(player.aimDirection.x.toFixed(3)),
+        aimY: Number(player.aimDirection.y.toFixed(3)),
+        alive: player.alive,
+        lives: player.lives,
+        hasBomb: this.bomb.owner === player,
+        hasWeapon: player.hasWeapon
+      })),
+      bomb: {
+        x: Math.round(this.bomb.x),
+        y: Math.round(this.bomb.y),
+        state: this.bomb.state,
+        ownerId: this.bomb.owner.id,
+        responsibleId: this.bomb.responsible.id,
+        velocityX: Math.round(this.bomb.velocity.x),
+        velocityY: Math.round(this.bomb.velocity.y),
+        visible: this.bomb.shape.visible
+      },
+      round: {
+        aliveCount: this.getAlivePlayers().length,
+        remainingMs: Math.max(0, Math.round(this.roundEndsAt - this.time.now)),
+        timerSeconds: this.roundTimerSeconds,
+        resolving: this.roundResolving,
+        matchOver: this.matchOver,
+        winnerId: this.winner?.id ?? null
+      }
+    };
+  }
+
+  private applyOnlineRoom(room: OnlineRoomSnapshot | null) {
+    const online = this.settings.online;
+    if (!room?.players || !online.enabled) {
+      return;
+    }
+
+    if (room.match) {
+      this.latestOnlineMatch = room.match;
+    }
+
+    if (online.role === "guest") {
+      return;
+    }
+
+    const seen = new Set<string>();
+    for (const snapshot of Object.values(room.players)) {
+      if (!snapshot || snapshot.id === online.playerId) {
+        continue;
+      }
+
+      seen.add(snapshot.id);
+      this.updateRemoteAvatar(snapshot);
+    }
+
+    for (const [id, avatar] of this.remoteAvatars) {
+      if (seen.has(id)) {
+        continue;
+      }
+
+      avatar.container.destroy(true);
+      this.remoteAvatars.delete(id);
+    }
+  }
+
+  private updateRemoteAvatar(snapshot: OnlinePlayerSnapshot) {
+    const avatar = this.remoteAvatars.get(snapshot.id) ?? this.createRemoteAvatar(snapshot);
+    avatar.container.setPosition(snapshot.x, snapshot.y);
+    avatar.container.setVisible(snapshot.alive);
+    avatar.container.setAlpha(snapshot.alive ? 0.78 : 0.18);
+    avatar.aim.rotation = Math.atan2(snapshot.aimY, snapshot.aimX);
+    avatar.label.setText(snapshot.name);
+    avatar.body.setFillStyle(snapshot.color, 0.86);
+    avatar.body.setStrokeStyle(3, snapshot.hasBomb ? 0xffcf33 : 0x86f7ff, snapshot.hasBomb ? 0.95 : 0.5);
+    avatar.weaponBadge.setVisible(snapshot.hasWeapon);
+    avatar.weaponBadge.setAlpha(snapshot.hasWeapon ? 0.9 : 0);
+  }
+
+  private createRemoteAvatar(snapshot: OnlinePlayerSnapshot) {
+    const body = this.add.circle(0, 0, PLAYER.radius, snapshot.color, 0.86);
+    body.setStrokeStyle(3, 0x86f7ff, 0.5);
+    const aim = this.add.rectangle(PLAYER.radius + 14, 0, 34, 5, 0x86f7ff, 0.68);
+    aim.setOrigin(0, 0.5);
+    const weaponBadge = this.add.rectangle(0, PLAYER.radius + 13, 26, 6, 0x86f7ff, 0);
+    weaponBadge.setStrokeStyle(1, 0xffffff, 0.4);
+    const label = this.add.text(0, -38, snapshot.name, {
+      color: "#86f7ff",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "13px",
+      fontStyle: "800"
+    });
+    label.setOrigin(0.5);
+    const container = this.add.container(snapshot.x, snapshot.y, [body, aim, weaponBadge, label]);
+    container.setDepth(6);
+    const avatar = { container, body, aim, label, weaponBadge };
+    this.remoteAvatars.set(snapshot.id, avatar);
+    return avatar;
+  }
+
+  private updateGuestOnlineView() {
+    this.updateHud(false);
+    const match = this.latestOnlineMatch;
+    if (!match) {
+      this.onlineStatusText.setText(`ONLINE ${this.settings.online.roomCode} WAIT`);
+      return;
+    }
+
+    this.onlineStatusText.setText(`ONLINE ${this.settings.online.roomCode}`);
+    if (this.getAlivePlayers().length !== match.round.aliveCount) {
+      this.createArena(match.round.aliveCount);
+    }
+
+    for (const snapshot of match.players) {
+      const player = this.players.find((candidate) => candidate.id === snapshot.id);
+      if (!player) {
+        continue;
+      }
+
+      this.applyOnlinePlayerState(player, snapshot);
+    }
+
+    const owner = this.players.find((player) => player.id === match.bomb.ownerId) ?? this.human;
+    const responsible = this.players.find((player) => player.id === match.bomb.responsibleId) ?? owner;
+    this.bomb.owner = owner;
+    this.bomb.responsible = responsible;
+    this.bomb.state = match.bomb.state;
+    this.bomb.velocity.set(match.bomb.velocityX, match.bomb.velocityY);
+    this.bomb.setVisible(match.bomb.visible);
+    this.bomb.shape.setPosition(match.bomb.x, match.bomb.y);
+    this.bomb.fuse.setPosition(match.bomb.x, match.bomb.y);
+    this.bomb.directionRing.setPosition(match.bomb.x, match.bomb.y);
+
+    this.roundResolving = match.round.resolving;
+    this.matchOver = match.round.matchOver;
+    this.roundTimerSeconds = match.round.timerSeconds;
+    this.roundEndsAt = this.time.now + match.round.remainingMs;
+    this.winner = match.round.winnerId
+      ? this.players.find((player) => player.id === match.round.winnerId)
+      : undefined;
+    this.updateHud(true);
+  }
+
+  private applyOnlinePlayerState(player: Player, snapshot: OnlineMatchPlayerState) {
+    player.alive = snapshot.alive;
+    player.lives = snapshot.lives;
+    player.hasWeapon = snapshot.hasWeapon;
+    player.container.setVisible(snapshot.alive);
+    player.container.setAlpha(snapshot.alive ? 1 : 0.2);
+    player.container.setScale(snapshot.alive ? 1 : 0.72);
+    player.container.setPosition(snapshot.x, snapshot.y);
+    player.velocity.set(0, 0);
+    player.aimDirection.set(snapshot.aimX, snapshot.aimY);
+    if (player.aimDirection.lengthSq() > 0) {
+      player.aimDirection.normalize();
+      player.aim.rotation = player.aimDirection.angle();
+    }
+    player.label.setText(snapshot.name);
+    player.body.setFillStyle(snapshot.color, 1);
+    player.setBombHolder(snapshot.hasBomb);
+    player.weaponAura.setVisible(snapshot.hasWeapon);
+    player.weaponAura.setAlpha(snapshot.hasWeapon ? 0.38 : 0);
+    player.weaponBadge.setVisible(snapshot.hasWeapon);
+    player.weaponBadge.setAlpha(snapshot.hasWeapon ? 0.95 : 0);
+  }
+
+  private isOnlineGuest() {
+    return this.settings.online.enabled && this.settings.online.role === "guest";
   }
 
   private updateWeapons() {

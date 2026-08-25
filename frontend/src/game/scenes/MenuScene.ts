@@ -1,12 +1,17 @@
 import Phaser from "phaser";
 import { GAME_HEIGHT, GAME_WIDTH } from "../config";
-import { GameSettings, loadSettings, saveSettings } from "../settings";
+import { hasFirebaseConfig } from "../online/firebaseClient";
+import { createPlayerId, GameSettings, loadSettings, saveSettings } from "../settings";
 
 const MENU_TEXT = {
   en: {
     title: "BOMB TAG",
     subtitle: "8 enter. 1 leaves.",
     start: "Start match",
+    hostOnline: "Host online",
+    joinOnline: "Join room",
+    room: "Room",
+    firebaseMissing: "Firebase config missing",
     language: "Language",
     volume: "Volume",
     debug: "Debug mode",
@@ -26,6 +31,10 @@ const MENU_TEXT = {
     title: "BOMB TAG",
     subtitle: "8 entram. 1 sai.",
     start: "Iniciar partida",
+    hostOnline: "Criar sala online",
+    joinOnline: "Entrar na sala",
+    room: "Sala",
+    firebaseMissing: "Config Firebase ausente",
     language: "Idioma",
     volume: "Volume",
     debug: "Modo debug",
@@ -51,6 +60,9 @@ export class MenuScene extends Phaser.Scene {
   private controlsText!: Phaser.GameObjects.Text;
   private subtitle!: Phaser.GameObjects.Text;
   private startLabel!: Phaser.GameObjects.Text;
+  private hostLabel!: Phaser.GameObjects.Text;
+  private joinLabel!: Phaser.GameObjects.Text;
+  private roomLabel!: Phaser.GameObjects.Text;
   private controlsTitle!: Phaser.GameObjects.Text;
   private debugHint!: Phaser.GameObjects.Text;
   private languageLabel!: Phaser.GameObjects.Text;
@@ -119,24 +131,49 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5, 0);
     startButton.add(this.startLabel);
 
-    this.languageLabel = this.add.text(118, 358, "", this.labelStyle());
-    this.languageValue = this.add.text(360, 358, "", this.valueStyle()).setOrigin(0.5, 0);
-    this.createButton(512, 344, 74, 38, 0x86f7ff, () => this.toggleLanguage()).add(
+    const hostButton = this.createButton(116, 330, 164, 46, 0x86f7ff, () => this.hostOnline());
+    this.hostLabel = this.add.text(0, -10, "", {
+      color: "#f7f8ff",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "16px",
+      fontStyle: "900"
+    }).setOrigin(0.5, 0);
+    hostButton.add(this.hostLabel);
+
+    const joinButton = this.createButton(292, 330, 164, 46, 0x86f7ff, () => this.joinOnline());
+    this.joinLabel = this.add.text(0, -10, "", {
+      color: "#f7f8ff",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "16px",
+      fontStyle: "900"
+    }).setOrigin(0.5, 0);
+    joinButton.add(this.joinLabel);
+
+    this.roomLabel = this.add.text(118, 390, "", {
+      color: "#b9bfcd",
+      fontFamily: "ui-sans-serif, system-ui",
+      fontSize: "14px",
+      fontStyle: "800"
+    });
+
+    this.languageLabel = this.add.text(118, 444, "", this.labelStyle());
+    this.languageValue = this.add.text(360, 444, "", this.valueStyle()).setOrigin(0.5, 0);
+    this.createButton(512, 430, 74, 38, 0x86f7ff, () => this.toggleLanguage()).add(
       this.add.text(0, -9, "<>", this.valueStyle()).setOrigin(0.5, 0)
     );
 
-    this.volumeLabel = this.add.text(118, 422, "", this.labelStyle());
-    this.createButton(318, 410, 44, 36, 0x86f7ff, () => this.changeVolume(-0.1)).add(
+    this.volumeLabel = this.add.text(118, 502, "", this.labelStyle());
+    this.createButton(318, 490, 44, 36, 0x86f7ff, () => this.changeVolume(-0.1)).add(
       this.add.text(0, -10, "-", this.valueStyle()).setOrigin(0.5, 0)
     );
-    this.volumeValue = this.add.text(390, 422, "", this.valueStyle()).setOrigin(0.5, 0);
-    this.createButton(462, 410, 44, 36, 0x86f7ff, () => this.changeVolume(0.1)).add(
+    this.volumeValue = this.add.text(390, 502, "", this.valueStyle()).setOrigin(0.5, 0);
+    this.createButton(462, 490, 44, 36, 0x86f7ff, () => this.changeVolume(0.1)).add(
       this.add.text(0, -10, "+", this.valueStyle()).setOrigin(0.5, 0)
     );
 
-    this.debugLabel = this.add.text(118, 486, "", this.labelStyle());
-    this.debugValue = this.add.text(390, 486, "", this.valueStyle()).setOrigin(0.5, 0);
-    this.createButton(512, 472, 74, 38, 0xffcf33, () => this.toggleDebug()).add(
+    this.debugLabel = this.add.text(118, 560, "", this.labelStyle());
+    this.debugValue = this.add.text(390, 560, "", this.valueStyle()).setOrigin(0.5, 0);
+    this.createButton(512, 548, 74, 38, 0xffcf33, () => this.toggleDebug()).add(
       this.add.text(0, -9, "<>", this.valueStyle()).setOrigin(0.5, 0)
     );
 
@@ -153,7 +190,7 @@ export class MenuScene extends Phaser.Scene {
       fontStyle: "800",
       lineSpacing: 16
     });
-    this.debugHint = this.add.text(118, 536, "", {
+    this.debugHint = this.add.text(118, 610, "", {
       color: "#b9bfcd",
       fontFamily: "ui-sans-serif, system-ui",
       fontSize: "14px",
@@ -177,6 +214,9 @@ export class MenuScene extends Phaser.Scene {
     const dictionary = MENU_TEXT[this.settings.language];
     this.subtitle.setText(dictionary.subtitle);
     this.startLabel.setText(dictionary.start);
+    this.hostLabel.setText(dictionary.hostOnline);
+    this.joinLabel.setText(dictionary.joinOnline);
+    this.roomLabel.setText(this.getRoomLabel());
     this.languageLabel.setText(dictionary.language);
     this.languageValue.setText(this.settings.language === "en" ? "EN" : "PT");
     this.volumeLabel.setText(dictionary.volume);
@@ -187,6 +227,19 @@ export class MenuScene extends Phaser.Scene {
     this.controlsTitle.setText(dictionary.controlsTitle);
     this.controlsText.setText(dictionary.controls.join("\n"));
     this.debugHint.setText(dictionary.debugHint);
+  }
+
+  private getRoomLabel() {
+    const dictionary = MENU_TEXT[this.settings.language];
+    if (!hasFirebaseConfig()) {
+      return dictionary.firebaseMissing;
+    }
+
+    if (!this.settings.online.enabled || !this.settings.online.roomCode) {
+      return `${dictionary.room}: --`;
+    }
+
+    return `${dictionary.room}: ${this.settings.online.roomCode}`;
   }
 
   private toggleLanguage() {
@@ -210,8 +263,41 @@ export class MenuScene extends Phaser.Scene {
   }
 
   private startGame() {
+    this.settings.online.enabled = false;
     saveSettings(this.settings);
     this.scene.start("GameScene", this.settings);
+  }
+
+  private hostOnline() {
+    this.settings.online = {
+      enabled: true,
+      role: "host",
+      roomCode: this.createRoomCode(),
+      playerId: this.settings.online.playerId || createPlayerId()
+    };
+    saveSettings(this.settings);
+    this.scene.start("GameScene", this.settings);
+  }
+
+  private joinOnline() {
+    const code = window.prompt("Room code")?.trim().toUpperCase();
+    if (!code) {
+      return;
+    }
+
+    this.settings.online = {
+      enabled: true,
+      role: "guest",
+      roomCode: code,
+      playerId: this.settings.online.playerId || createPlayerId()
+    };
+    saveSettings(this.settings);
+    this.scene.start("GameScene", this.settings);
+  }
+
+  private createRoomCode() {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    return Array.from({ length: 5 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
   }
 
   private labelStyle(): Phaser.Types.GameObjects.Text.TextStyle {
