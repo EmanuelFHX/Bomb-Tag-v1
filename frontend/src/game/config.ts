@@ -37,7 +37,12 @@ export const BOMB = {
   timerSeconds: 20,
   specialHomingTurnRate: 2.8,
   specialThrowSpeedStep: 0.035,
-  specialThrowSpeedMaxBonus: 0.22
+  specialThrowSpeedMaxBonus: 0.22,
+  parryPerfectDistance: 64,
+  parryBlockDistance: 116,
+  parryWindowMs: 280,
+  parryCooldownMs: 820,
+  parryTransferCooldownMs: 130
 } as const;
 
 export const BOT = {

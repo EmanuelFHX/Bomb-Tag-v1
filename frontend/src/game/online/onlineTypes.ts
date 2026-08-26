@@ -12,7 +12,7 @@ export type OnlinePlayerSnapshot = {
   hasBomb: boolean;
   hasWeapon: boolean;
   actionSeq?: number;
-  actionType?: "primary";
+  actionType?: "primary" | "parry";
   dashSeq?: number;
   dashX?: number;
   dashY?: number;
@@ -117,6 +117,14 @@ export type OnlineCombatEventDraft =
       color: number;
       targetId: string;
       isHumanTarget: boolean;
+    }
+  | {
+      type: "parry";
+      x: number;
+      y: number;
+      color: number;
+      playerId: string;
+      perfect: boolean;
     }
   | {
       type: "explosion";

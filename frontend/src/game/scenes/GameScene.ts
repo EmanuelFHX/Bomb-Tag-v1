@@ -63,7 +63,6 @@ type RemotePlayerTarget = {
   velocityY: number;
   aimX: number;
   aimY: number;
-  hasWeapon: boolean;
   lastSnapshotAt: number;
 };
 
@@ -109,6 +108,7 @@ const TEXT = {
       "3 lives restored",
       "2 recharging dashes",
       "+0.5s on 3 players, +1s on final duel",
+      "right click parry: perfect returns the bomb",
       "miss the returning catch: -1 life"
     ],
     livesRestored: "LIVES RESTORED\n3 LIVES FOR EACH FINALIST",
@@ -116,7 +116,7 @@ const TEXT = {
     skipToFour: "4P",
     eliminated: (name: string) => `${name} ELIMINATED`,
     wins: (name: string) => `${name} WINS\nR TO REMATCH`,
-    controls: "WASD move  |  Mouse aim  |  Left click throw/shoot  |  Shift/Space dash  |  R rematch",
+    controls: "WASD move  |  Mouse aim  |  Left click throw/shoot  |  Right click parry  |  Shift/Space dash  |  R rematch",
     language: "EN"
   },
   pt: {
@@ -138,6 +138,7 @@ const TEXT = {
       "3 vidas restauradas",
       "2 dashes recarregaveis",
       "+0,5s com 3 players, +1s no duelo final",
+      "clique direito parry: perfeito devolve a bomba",
       "errou a pegada do retorno: -1 vida"
     ],
     livesRestored: "VIDAS RESTAURADAS\n3 VIDAS PARA CADA FINALISTA",
@@ -145,7 +146,7 @@ const TEXT = {
     skipToFour: "4J",
     eliminated: (name: string) => `${name} ELIMINADO`,
     wins: (name: string) => `${name} VENCEU\nR PARA REVANCHE`,
-    controls: "WASD mover  |  Mouse mirar  |  Clique esquerdo lancar/atirar  |  Shift/Espaco dash  |  R revanche",
+    controls: "WASD mover  |  Mouse mirar  |  Clique esquerdo lancar/atirar  |  Clique direito parry  |  Shift/Espaco dash  |  R revanche",
     language: "PT"
   }
 } as const;
@@ -206,6 +207,8 @@ export class GameScene extends Phaser.Scene {
   private nextCriticalPulseAt = 0;
   private botThrowReadyAt = new Map<string, number>();
   private botShotReadyAt = new Map<string, number>();
+  private parryReadyAt = new Map<string, number>();
+  private parryActiveUntil = new Map<string, number>();
   private weaponPickups: WeaponPickup[] = [];
   private shots: Shot[] = [];
   private weaponPickupSequence = 0;
@@ -262,6 +265,7 @@ export class GameScene extends Phaser.Scene {
     this.inputSystem = new InputSystem(this);
     this.audio = new AudioSystem();
     this.audio.setVolume(this.settings.volume);
+    this.input.mouse?.disableContextMenu();
     this.arenaRect = new Phaser.Geom.Rectangle(ARENA.x, ARENA.y, ARENA.width, ARENA.height);
     this.graphics = this.add.graphics();
     this.createArena(BOT.count + 1);
@@ -275,6 +279,10 @@ export class GameScene extends Phaser.Scene {
       this.audio.unlock();
       this.startMatchMusic();
       this.primeFinalBattleMusic();
+      if (pointer.rightButtonDown() && !this.roundResolving && !this.matchOver) {
+        this.handleHumanParry();
+        return;
+      }
       if (pointer.leftButtonDown() && !this.roundResolving && !this.matchOver) {
         this.handleHumanAction();
       }
@@ -319,6 +327,7 @@ export class GameScene extends Phaser.Scene {
     const pointer = this.input.activePointer;
     const pointerWorld = new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
     const moveDirection = this.inputSystem.getMoveDirection();
+    let forceOnlineMatchSync = false;
 
     this.human.updateHuman(
       deltaSeconds,
@@ -330,7 +339,11 @@ export class GameScene extends Phaser.Scene {
     for (const player of this.players) {
       if (this.isBotControlledPlayer(player)) {
         const intent = this.getBotIntent(player);
+        const previousDashSeq = player.dashVisualSequence;
         player.updateBot(deltaSeconds, intent.aimTarget, intent.moveDirection, intent.shouldDash);
+        if (player.dashVisualSequence !== previousDashSeq) {
+          forceOnlineMatchSync = true;
+        }
       } else if (this.isRemoteControlledPlayer(player)) {
         this.updateRemoteControlledSlot(player, deltaSeconds);
       }
@@ -347,10 +360,11 @@ export class GameScene extends Phaser.Scene {
     this.bomb.update(deltaSeconds, this.arenaRect, this.arenaPolygon, this.arenaPolygonCenter);
     this.updateHomingIndicator();
     this.syncOnlinePlayer();
-    this.syncOnlineMatchState(this.shots.length > 0 && this.time.now >= this.nextOnlineMatchSyncAt);
+    this.syncOnlineMatchState(forceOnlineMatchSync || (this.shots.length > 0 && this.time.now >= this.nextOnlineMatchSyncAt));
     if (this.shots.length > 0 && this.time.now >= this.nextOnlineMatchSyncAt) {
       this.nextOnlineMatchSyncAt = this.time.now + 45;
     }
+    this.resolveActiveParries();
     this.resolveBombHits();
     this.resolveSpecialCatchMiss();
     this.bomb.tryCatchOwner();
@@ -504,6 +518,15 @@ export class GameScene extends Phaser.Scene {
     this.fireWeapon(this.human, this.human.aimDirection.clone());
   }
 
+  private handleHumanParry() {
+    if (this.isOnlineGuest()) {
+      this.queueOnlinePlayerAction("parry");
+      return;
+    }
+
+    this.tryParry(this.human);
+  }
+
   private queueOnlinePlayerAction(actionType: OnlinePlayerSnapshot["actionType"]) {
     this.pendingOnlineActionSeq += 1;
     this.pendingOnlineActionType = actionType;
@@ -532,6 +555,93 @@ export class GameScene extends Phaser.Scene {
     );
     this.bomb.setIntensity(this.baseBombSpeedMultiplier * (1 + this.specialBombSpeedBonus));
     return launched;
+  }
+
+  private tryParry(player: Player) {
+    if (!this.isFinalPhase() || this.bomb.state === "HELD" || !player.alive || player === this.bomb.owner) {
+      return false;
+    }
+
+    const readyAt = this.parryReadyAt.get(player.id) ?? 0;
+    if (this.time.now < readyAt) {
+      return false;
+    }
+
+    this.parryReadyAt.set(player.id, this.time.now + BOMB.parryCooldownMs);
+    this.parryActiveUntil.set(player.id, this.time.now + BOMB.parryWindowMs);
+    this.playParryEffect(player, false, player.x, player.y, true);
+    return this.resolveParryWindow(player);
+  }
+
+  private resolveActiveParries() {
+    if (!this.isFinalPhase() || this.bomb.state === "HELD") {
+      this.parryActiveUntil.clear();
+      return;
+    }
+
+    for (const [playerId, activeUntil] of [...this.parryActiveUntil]) {
+      const player = this.players.find((candidate) => candidate.id === playerId);
+      if (!player || !player.alive || this.time.now > activeUntil) {
+        this.parryActiveUntil.delete(playerId);
+        continue;
+      }
+
+      this.resolveParryWindow(player);
+    }
+  }
+
+  private resolveParryWindow(player: Player) {
+    if (!this.parryActiveUntil.has(player.id) || this.bomb.state === "HELD" || player === this.bomb.owner) {
+      return false;
+    }
+
+    const distance = Phaser.Math.Distance.Between(this.bomb.x, this.bomb.y, player.x, player.y);
+    const toPlayer = new Phaser.Math.Vector2(player.x - this.bomb.x, player.y - this.bomb.y);
+    const movingTowardPlayer = toPlayer.lengthSq() > 0 && this.bomb.velocity.clone().normalize().dot(toPlayer.normalize()) > 0.35;
+    if (distance <= BOMB.parryPerfectDistance && movingTowardPlayer) {
+      return this.completeParry(player, true);
+    }
+
+    if (distance <= BOMB.parryBlockDistance && !movingTowardPlayer) {
+      return this.completeParry(player, false);
+    }
+
+    return false;
+  }
+
+  private completeParry(player: Player, perfect: boolean) {
+    this.parryActiveUntil.delete(player.id);
+    this.playParryEffect(player, perfect);
+    this.audio.playParry(perfect);
+    this.queueOnlineEvent({
+      type: "parry",
+      x: Math.round(player.x),
+      y: Math.round(player.y),
+      color: player.color,
+      playerId: player.id,
+      perfect
+    });
+
+    if (perfect) {
+      this.parryReadyAt.set(player.id, this.time.now);
+      const target = this.bomb.responsible.alive && this.bomb.responsible !== player
+        ? this.bomb.responsible
+        : this.getNearestOpponent(player);
+      if (!target) {
+        return false;
+      }
+      const redirected = this.bomb.parryToward(player, target);
+      if (redirected) {
+        this.showHomingIndicator(target);
+        this.syncOnlineMatchState(true);
+      }
+      return redirected;
+    }
+
+    this.transferBomb(player);
+    this.bomb.playTransferBurst(true);
+    this.syncOnlineMatchState(true);
+    return true;
   }
 
   private startFinalBattleMusic() {
@@ -891,7 +1001,6 @@ export class GameScene extends Phaser.Scene {
       velocityY: snapshot.velocityY,
       aimX: snapshot.aimX,
       aimY: snapshot.aimY,
-      hasWeapon: snapshot.hasWeapon,
       lastSnapshotAt: this.time.now
     });
     player.setBombHolder(this.bomb.owner === player);
@@ -917,7 +1026,6 @@ export class GameScene extends Phaser.Scene {
         player.aimDirection.normalize();
         player.aim.rotation = player.aimDirection.angle();
       }
-      player.setWeaponEquipped(target.hasWeapon);
     } else {
       player.container.x += player.velocity.x * deltaSeconds;
       player.container.y += player.velocity.y * deltaSeconds;
@@ -953,7 +1061,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private processRemotePlayerAction(player: Player, snapshot: OnlinePlayerSnapshot) {
-    if (!snapshot.actionSeq || snapshot.actionType !== "primary") {
+    if (!snapshot.actionSeq || !snapshot.actionType) {
       return;
     }
 
@@ -963,6 +1071,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.processedRemoteActions.set(snapshot.id, snapshot.actionSeq);
+    if (snapshot.actionType === "parry") {
+      this.tryParry(player);
+      return;
+    }
+
     if (this.bomb.state === "HELD" && this.bomb.owner === player) {
       this.launchBomb(player.aimDirection.clone());
       return;
@@ -1478,6 +1591,7 @@ export class GameScene extends Phaser.Scene {
     this.remotePlayerTargets.clear();
     this.processedRemoteActions.clear();
     this.processedRemoteDashes.clear();
+    this.parryActiveUntil.clear();
     this.pendingOnlineActionSeq = 0;
     this.pendingOnlineActionType = undefined;
     this.pendingOnlineDashSeq = 0;
@@ -1569,6 +1683,15 @@ export class GameScene extends Phaser.Scene {
       const target = this.players.find((player) => player.id === event.targetId);
       if (target) {
         this.showLifeLostFeedback(target);
+      }
+      return;
+    }
+
+    if (event.type === "parry") {
+      this.audio.playParry(event.perfect);
+      const player = this.players.find((candidate) => candidate.id === event.playerId);
+      if (player) {
+        this.playParryEffect(player, event.perfect, event.x, event.y);
       }
       return;
     }
@@ -1875,6 +1998,45 @@ export class GameScene extends Phaser.Scene {
         onComplete: () => shard.destroy()
       });
     }
+  }
+
+  private playParryEffect(player: Player, perfect: boolean, x = player.x, y = player.y, active = false) {
+    const color = active ? 0xffcf33 : perfect ? 0x86f7ff : 0xff5d4f;
+    const accent = active ? 0x86f7ff : perfect ? 0xffcf33 : 0x341820;
+    const ring = this.add.circle(x, y, active ? 48 : perfect ? 40 : 34, color, active ? 0.12 : 0.08);
+    ring.setStrokeStyle(active ? 3 : perfect ? 4 : 3, color, active ? 0.82 : perfect ? 0.95 : 0.76);
+    ring.setDepth(9);
+    const slash = this.add.rectangle(x, y, active ? 74 : perfect ? 82 : 58, active ? 5 : perfect ? 8 : 10, accent, active ? 0.72 : perfect ? 0.95 : 0.82);
+    slash.setRotation(player.aimDirection.angle());
+    slash.setDepth(10);
+
+    this.tweens.add({
+      targets: ring,
+      scale: active ? 1.75 : perfect ? 2.2 : 1.45,
+      alpha: 0,
+      duration: active ? BOMB.parryWindowMs + 90 : perfect ? 340 : 250,
+      ease: "Quad.easeOut",
+      onComplete: () => ring.destroy()
+    });
+    this.tweens.add({
+      targets: slash,
+      scaleX: active ? 0.7 : perfect ? 0.45 : 0.24,
+      alpha: 0,
+      duration: active ? BOMB.parryWindowMs + 40 : perfect ? 230 : 170,
+      ease: "Quad.easeOut",
+      onComplete: () => slash.destroy()
+    });
+    this.tweens.killTweensOf(player.body);
+    player.body.setScale(1);
+    this.tweens.add({
+      targets: player.body,
+      scaleX: perfect ? 1.35 : 1.18,
+      scaleY: perfect ? 1.35 : 0.86,
+      duration: 70,
+      yoyo: true,
+      ease: "Quad.easeOut",
+      onComplete: () => player.body.setScale(1)
+    });
   }
 
   private showLifeLostFeedback(target: Player, x = target.x, y = target.y) {
@@ -2231,6 +2393,8 @@ export class GameScene extends Phaser.Scene {
     this.hudTimer.setScale(1);
     this.audio.resetTimerTicks();
     this.clearWeaponsAndShots();
+    this.parryReadyAt.clear();
+    this.parryActiveUntil.clear();
     this.baseBombSpeedMultiplier = stage.bombSpeedMultiplier;
     this.specialBombSpeedBonus = 0;
     this.createArena(alivePlayers.length);
