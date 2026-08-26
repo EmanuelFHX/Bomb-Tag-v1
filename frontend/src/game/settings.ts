@@ -2,6 +2,7 @@ export type Language = "en" | "pt";
 
 export type GameSettings = {
   language: Language;
+  playerName: string;
   volume: number;
   debugMode: boolean;
   online: OnlineSettings;
@@ -20,6 +21,7 @@ const STORAGE_KEY = "bomb-tag-settings";
 
 export const DEFAULT_SETTINGS: GameSettings = {
   language: "en",
+  playerName: "Player",
   volume: 1,
   debugMode: false,
   online: {
@@ -50,6 +52,7 @@ export function loadSettings(): GameSettings {
     const parsed = JSON.parse(saved) as Partial<GameSettings>;
     return {
       language: parsed.language === "pt" ? "pt" : "en",
+      playerName: normalizePlayerName(parsed.playerName),
       volume: typeof parsed.volume === "number" ? Math.min(1, Math.max(0, parsed.volume)) : DEFAULT_SETTINGS.volume,
       debugMode: parsed.debugMode === true,
       online: {
@@ -74,4 +77,17 @@ export function loadSettings(): GameSettings {
 
 export function saveSettings(settings: GameSettings) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+}
+
+export function normalizePlayerName(name: unknown) {
+  if (typeof name !== "string") {
+    return DEFAULT_SETTINGS.playerName;
+  }
+
+  const trimmed = name.trim().replace(/\s+/g, " ");
+  if (!trimmed) {
+    return DEFAULT_SETTINGS.playerName;
+  }
+
+  return trimmed.slice(0, 14);
 }
