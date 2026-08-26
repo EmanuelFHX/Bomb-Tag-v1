@@ -10,6 +10,17 @@ const MENU_TEXT = {
     start: "START MATCH",
     multiplayer: "MULTIPLAYER",
     settings: "SETTINGS",
+    howToPlay: "HOW TO PLAY",
+    howToPlayTitle: "HOW TO PLAY",
+    howToPlayLines: [
+      "Bomb Tag is an arena survival game: 8 players enter and only 1 leaves.",
+      "Hold the bomb, aim with the mouse, and throw it before the timer ends.",
+      "The bomb can ricochet, return to the thrower, and become homing in the final round.",
+      "Weapons spawn during the match. Pick one up and shoot to remove enemy lives.",
+      "Dash gives a short burst of movement and invulnerability. In the final round, dashes recharge.",
+      "In the final round, right click to parry. Perfect parry returns the bomb; bad parry gives it to you.",
+      "Spin 180 degrees while holding the bomb, then throw to launch it faster. In the final round, spin throws break parries."
+    ],
     hostOnline: "HOST ROOM",
     joinOnline: "JOIN ROOM",
     back: "BACK",
@@ -32,6 +43,17 @@ const MENU_TEXT = {
     start: "INICIAR PARTIDA",
     multiplayer: "MULTIPLAYER",
     settings: "CONFIGURACOES",
+    howToPlay: "COMO JOGAR",
+    howToPlayTitle: "COMO JOGAR",
+    howToPlayLines: [
+      "Bomb Tag e um jogo de sobrevivencia em arena: 8 jogadores entram e apenas 1 sai.",
+      "Segure a bomba, mire com o mouse e lance antes do timer acabar.",
+      "A bomba pode ricochetear, voltar para quem lancou e ficar teleguiada na rodada final.",
+      "Armas aparecem durante a partida. Pegue uma e atire para tirar vidas dos inimigos.",
+      "O dash da uma corrida curta e invulnerabilidade. Na rodada final, os dashes recarregam.",
+      "Na rodada final, use clique direito para dar parry. Parry perfeito devolve a bomba; parry ruim passa a bomba para voce.",
+      "Gire 180 graus segurando a bomba e lance para jogar mais rapido. Na rodada final, esse giro quebra parries."
+    ],
     hostOnline: "CRIAR SALA",
     joinOnline: "ENTRAR NA SALA",
     back: "VOLTAR",
@@ -285,6 +307,7 @@ export class MenuScene extends Phaser.Scene {
     this.createMenuButton(450, 302, 380, 64, dictionary.start, () => this.startGame(), "primary");
     this.createMenuButton(450, 382, 380, 64, dictionary.multiplayer, () => this.showMultiplayerMenu(), "secondary");
     this.createMenuButton(450, 462, 380, 64, dictionary.settings, () => this.showSettingsMenu(), "secondary");
+    this.createMenuButton(500, 542, 280, 52, dictionary.howToPlay, () => this.openHowToPlayModal(), "quiet");
   }
 
   private showMultiplayerMenu() {
@@ -505,6 +528,43 @@ export class MenuScene extends Phaser.Scene {
       saveSettings(this.settings);
       this.nameValue.setText(this.settings.playerName);
     });
+  }
+
+  private openHowToPlayModal() {
+    this.closeModal();
+    const dictionary = MENU_TEXT[this.settings.language];
+    const blocker = this.add.zone(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT);
+    blocker.setDepth(30);
+    blocker.setInteractive();
+    this.modalObjects.push(blocker);
+
+    const overlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x020407, 0.76);
+    overlay.setDepth(30);
+    this.modalObjects.push(overlay);
+
+    const panel = this.add.graphics();
+    panel.setDepth(31);
+    this.drawModalPanel(panel, 310, 112, 660, 496);
+    this.modalObjects.push(panel);
+
+    this.addModalText(GAME_WIDTH / 2, 146, dictionary.howToPlayTitle, {
+      color: "#ffbf16",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "30px",
+      fontStyle: "900"
+    }).setOrigin(0.5);
+
+    const body = dictionary.howToPlayLines.map((line) => `> ${line}`).join("\n\n");
+    this.addModalText(366, 196, body, {
+      color: "#f7f8ff",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "15px",
+      fontStyle: "900",
+      lineSpacing: 8,
+      wordWrap: { width: 548 }
+    });
+
+    this.createModalButton(GAME_WIDTH / 2 - 90, 536, 180, 48, dictionary.ok, () => this.closeModal(), "primary");
   }
 
   private openTextModal(
