@@ -105,6 +105,26 @@ export class Bomb {
     return true;
   }
 
+  parryToward(parrier: Player, target: Player) {
+    const direction = new Phaser.Math.Vector2(target.x - this.x, target.y - this.y);
+    if (direction.lengthSq() === 0) {
+      return false;
+    }
+
+    const currentSpeed = Math.max(this.velocity.length(), BOMB.speed * this.speedMultiplier);
+    this.owner = parrier;
+    this.responsible = parrier;
+    this.state = "OUTBOUND";
+    this.velocity.copy(direction.normalize().scale(currentSpeed * 1.08));
+    this.launchedAt = this.scene.time.now;
+    this.ricochets = 0;
+    this.canTransferAt = this.scene.time.now + BOMB.parryTransferCooldownMs;
+    this.homingTarget = target;
+    this.clearTrail();
+    this.applyVisualState();
+    return true;
+  }
+
   update(
     deltaSeconds: number,
     arena: Phaser.Geom.Rectangle,

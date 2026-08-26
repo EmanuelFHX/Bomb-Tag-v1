@@ -133,6 +133,19 @@ export class AudioSystem {
     this.beep({ frequency: isHumanTarget ? 130 : 700, duration: 0.085, gain: 0.09, type: "triangle", delay: 0.055 });
   }
 
+  playParry(perfect: boolean) {
+    this.unlock();
+    if (perfect) {
+      this.beep({ frequency: 980, duration: 0.055, gain: 0.15, type: "triangle" });
+      this.beep({ frequency: 1460, duration: 0.075, gain: 0.12, type: "sine", delay: 0.045 });
+      this.beep({ frequency: 1880, duration: 0.045, gain: 0.1, type: "square", delay: 0.105 });
+      return;
+    }
+
+    this.beep({ frequency: 220, duration: 0.09, gain: 0.14, type: "sawtooth" });
+    this.beep({ frequency: 160, duration: 0.12, gain: 0.1, type: "triangle", delay: 0.06 });
+  }
+
   private playDirectHit(byHuman: boolean) {
     const gain = byHuman ? 0.18 : 0.12;
     this.beep({ frequency: 660, duration: 0.075, gain, type: "triangle" });
