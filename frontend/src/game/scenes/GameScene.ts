@@ -56,6 +56,22 @@ type RemoteAvatar = {
   weaponBadge: Phaser.GameObjects.Rectangle;
 };
 
+type RemotePlayerTarget = {
+  x: number;
+  y: number;
+  velocityX: number;
+  velocityY: number;
+  aimX: number;
+  aimY: number;
+  hasWeapon: boolean;
+  lastSnapshotAt: number;
+};
+
+type RemotePlayerSlot = {
+  player: Player;
+  slotId: string;
+};
+
 type OnlineShotVisual = {
   shape: Phaser.GameObjects.Rectangle;
   spark: Phaser.GameObjects.Arc;
@@ -205,10 +221,14 @@ export class GameScene extends Phaser.Scene {
   private onlineConnecting = false;
   private onlineHostHeartbeat?: number;
   private remoteAvatars = new Map<string, RemoteAvatar>();
-  private remotePlayerSlots = new Map<string, Player>();
+  private remotePlayerSlots = new Map<string, RemotePlayerSlot>();
+  private remotePlayerTargets = new Map<string, RemotePlayerTarget>();
   private processedRemoteActions = new Map<string, number>();
+  private processedRemoteDashes = new Map<string, number>();
   private pendingOnlineActionSeq = 0;
   private pendingOnlineActionType: OnlinePlayerSnapshot["actionType"];
+  private pendingOnlineDashSeq = 0;
+  private pendingOnlineDashDirection = new Phaser.Math.Vector2(1, 0);
   private onlineShotVisuals = new Map<string, OnlineShotVisual>();
   private onlinePickupVisuals = new Map<string, OnlinePickupVisual>();
   private latestOnlineMatch?: OnlineMatchState;
@@ -308,9 +328,11 @@ export class GameScene extends Phaser.Scene {
     );
 
     for (const player of this.players) {
-      if (player.kind === "bot" && !this.remotePlayerSlots.has(player.id)) {
+      if (this.isBotControlledPlayer(player)) {
         const intent = this.getBotIntent(player);
         player.updateBot(deltaSeconds, intent.aimTarget, intent.moveDirection, intent.shouldDash);
+      } else if (this.isRemoteControlledPlayer(player)) {
+        this.updateRemoteControlledSlot(player, deltaSeconds);
       }
       player.keepInside(this.arenaRect);
       if (this.arenaPolygon) {
@@ -665,7 +687,10 @@ export class GameScene extends Phaser.Scene {
       hasBomb: this.bomb.owner === this.human,
       hasWeapon: this.human.hasWeapon,
       actionSeq: this.pendingOnlineActionSeq,
-      actionType: this.pendingOnlineActionType
+      actionType: this.pendingOnlineActionType,
+      dashSeq: this.pendingOnlineDashSeq,
+      dashX: Number(this.pendingOnlineDashDirection.x.toFixed(3)),
+      dashY: Number(this.pendingOnlineDashDirection.y.toFixed(3))
     });
     this.pendingOnlineActionType = undefined;
     if (!updated) {
@@ -681,11 +706,19 @@ export class GameScene extends Phaser.Scene {
     const pointer = this.input.activePointer;
     const pointerWorld = new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
     const moveDirection = this.inputSystem.getMoveDirection();
+    const dashPressed = this.inputSystem.consumeDashPressed();
+    if (dashPressed) {
+      const dashDirection = moveDirection.lengthSq() > 0 ? moveDirection.clone() : this.human.aimDirection.clone();
+      if (dashDirection.lengthSq() > 0) {
+        this.pendingOnlineDashSeq += 1;
+        this.pendingOnlineDashDirection.copy(dashDirection.normalize());
+      }
+    }
     this.human.updateHuman(
       deltaSeconds,
       moveDirection,
       pointerWorld,
-      this.inputSystem.consumeDashPressed()
+      dashPressed
     );
     this.human.keepInside(this.arenaRect);
     if (this.arenaPolygon) {
@@ -704,6 +737,11 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private getOnlinePlayerSlotId(player: Player) {
+    const remoteSlot = this.remotePlayerSlots.get(player.id);
+    return remoteSlot?.slotId ?? player.id;
+  }
+
   private createOnlineMatchState(): OnlineMatchState {
     const match: OnlineMatchState = {
       updatedAt: Date.now(),
@@ -711,6 +749,7 @@ export class GameScene extends Phaser.Scene {
       events: this.onlineEvents,
       players: this.players.map((player) => ({
         id: player.id,
+        slotId: this.getOnlinePlayerSlotId(player),
         name: this.getPlayerName(player),
         color: player.color,
         x: Math.round(player.x),
@@ -722,7 +761,10 @@ export class GameScene extends Phaser.Scene {
         alive: player.alive,
         lives: player.lives,
         hasBomb: this.bomb.owner === player,
-        hasWeapon: player.hasWeapon
+        hasWeapon: player.hasWeapon,
+        dashSeq: player.dashVisualSequence,
+        dashX: Number(player.dashVisualDirection.x.toFixed(3)),
+        dashY: Number(player.dashVisualDirection.y.toFixed(3))
       })),
       bomb: {
         x: Math.round(this.bomb.x),
@@ -806,13 +848,16 @@ export class GameScene extends Phaser.Scene {
       this.updateRemoteControlledPlayer(snapshot);
     }
 
-    for (const [id, player] of this.remotePlayerSlots) {
+    for (const [id, slot] of this.remotePlayerSlots) {
       if (seen.has(id)) {
         continue;
       }
 
       this.remotePlayerSlots.delete(id);
+      this.remotePlayerTargets.delete(id);
       this.processedRemoteActions.delete(id);
+      this.processedRemoteDashes.delete(id);
+      const player = slot.player;
       if (player.alive) {
         player.setEliminated();
         player.setBombHolder(false);
@@ -838,31 +883,58 @@ export class GameScene extends Phaser.Scene {
 
     player.name = snapshot.name;
     player.label.setText(snapshot.name);
-    player.container.setPosition(snapshot.x, snapshot.y);
-    player.velocity.set(snapshot.velocityX, snapshot.velocityY);
-    player.aimDirection.set(snapshot.aimX, snapshot.aimY);
-    if (player.aimDirection.lengthSq() > 0) {
-      player.aimDirection.normalize();
-      player.aim.rotation = player.aimDirection.angle();
-    }
-    player.keepInside(this.arenaRect);
-    if (this.arenaPolygon) {
-      player.keepInsidePolygon(this.arenaPolygon, this.arenaPolygonCenter);
+    this.remotePlayerTargets.set(snapshot.id, {
+      x: snapshot.x,
+      y: snapshot.y,
+      velocityX: snapshot.velocityX,
+      velocityY: snapshot.velocityY,
+      aimX: snapshot.aimX,
+      aimY: snapshot.aimY,
+      hasWeapon: snapshot.hasWeapon,
+      lastSnapshotAt: this.time.now
+    });
+    player.setBombHolder(this.bomb.owner === player);
+    this.processRemotePlayerDash(player, snapshot);
+    this.processRemotePlayerAction(player, snapshot);
+  }
+
+  private updateRemoteControlledSlot(player: Player, deltaSeconds: number) {
+    const target = this.remotePlayerTargets.get(player.id);
+    if (target) {
+      const snapshotAgeSeconds = Phaser.Math.Clamp((this.time.now - target.lastSnapshotAt) / 1000, 0, 0.12);
+      const targetX = target.x + target.velocityX * snapshotAgeSeconds;
+      const targetY = target.y + target.velocityY * snapshotAgeSeconds;
+      const distanceToTarget = Phaser.Math.Distance.Between(player.x, player.y, targetX, targetY);
+      const blend = distanceToTarget > 260 ? 1 : 1 - Math.exp(-deltaSeconds * 18);
+      player.container.setPosition(
+        Phaser.Math.Linear(player.x, targetX, blend),
+        Phaser.Math.Linear(player.y, targetY, blend)
+      );
+      player.velocity.set(target.velocityX, target.velocityY);
+      player.aimDirection.set(target.aimX, target.aimY);
+      if (player.aimDirection.lengthSq() > 0) {
+        player.aimDirection.normalize();
+        player.aim.rotation = player.aimDirection.angle();
+      }
+      player.setWeaponEquipped(target.hasWeapon);
+    } else {
+      player.container.x += player.velocity.x * deltaSeconds;
+      player.container.y += player.velocity.y * deltaSeconds;
+      player.velocity.scale(Math.pow(0.985, deltaSeconds * 60));
     }
     player.setBombHolder(this.bomb.owner === player);
-    this.processRemotePlayerAction(player, snapshot);
   }
 
   private getRemotePlayerSlot(snapshot: OnlinePlayerSnapshot) {
     const existing = this.remotePlayerSlots.get(snapshot.id);
     if (existing) {
-      return existing;
+      return existing.player;
     }
 
     const slot = this.players.find((player) => (
       player.kind === "bot" &&
       player.alive &&
-      !this.remotePlayerSlots.has(player.id)
+      !Array.from(this.remotePlayerSlots.values()).some((remoteSlot) => remoteSlot.player === player)
     ));
     if (!slot) {
       return undefined;
@@ -870,11 +942,12 @@ export class GameScene extends Phaser.Scene {
 
     this.botThrowReadyAt.delete(slot.id);
     this.botShotReadyAt.delete(slot.id);
+    const slotId = slot.id;
     slot.id = snapshot.id;
     slot.name = snapshot.name;
     slot.label.setText(snapshot.name);
     slot.body.setStrokeStyle(3, 0xffffff, 0.75);
-    this.remotePlayerSlots.set(snapshot.id, slot);
+    this.remotePlayerSlots.set(snapshot.id, { player: slot, slotId });
     return slot;
   }
 
@@ -895,6 +968,32 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.fireWeapon(player, player.aimDirection.clone());
+  }
+
+  private processRemotePlayerDash(player: Player, snapshot: Pick<OnlinePlayerSnapshot, "id" | "dashSeq" | "dashX" | "dashY">) {
+    if (!snapshot.dashSeq) {
+      return;
+    }
+
+    const previousSeq = this.processedRemoteDashes.get(snapshot.id) ?? 0;
+    if (snapshot.dashSeq <= previousSeq) {
+      return;
+    }
+
+    this.processedRemoteDashes.set(snapshot.id, snapshot.dashSeq);
+    const direction = new Phaser.Math.Vector2(snapshot.dashX ?? player.aimDirection.x, snapshot.dashY ?? player.aimDirection.y);
+    if (direction.lengthSq() === 0) {
+      direction.copy(player.aimDirection);
+    }
+    player.playDashVisual(direction.normalize());
+  }
+
+  private isRemoteControlledPlayer(player: Player) {
+    return this.remotePlayerSlots.get(player.id)?.player === player;
+  }
+
+  private isBotControlledPlayer(player: Player) {
+    return player.kind === "bot" && !this.isRemoteControlledPlayer(player);
   }
 
   private updateRemoteAvatar(snapshot: OnlinePlayerSnapshot) {
@@ -1020,6 +1119,26 @@ export class GameScene extends Phaser.Scene {
     }
     this.lastOnlineHomingTargetId = homingTarget?.id ?? null;
     this.bomb.setVisible(match.bomb.visible);
+    if (this.isOnlineGuest() && owner === this.human && match.bomb.state === "HELD") {
+      this.bomb.shape.setPosition(
+        this.human.x + this.human.aimDirection.x * BOMB.heldOffset,
+        this.human.y + this.human.aimDirection.y * BOMB.heldOffset
+      );
+      this.bomb.fuse.setPosition(this.bomb.shape.x, this.bomb.shape.y);
+      this.bomb.directionRing.setPosition(this.bomb.shape.x, this.bomb.shape.y);
+      this.applyOnlineShots(match.shots ?? [], deltaSeconds);
+      this.applyOnlinePickups(match.pickups ?? []);
+      this.roundResolving = match.round.resolving;
+      this.matchOver = match.round.matchOver;
+      this.specialRoundLivesRestored = match.round.specialLivesRestored;
+      this.roundTimerSeconds = match.round.timerSeconds;
+      this.roundEndsAt = this.time.now + match.round.remainingMs;
+      this.winner = match.round.winnerId
+        ? this.players.find((player) => player.id === match.round.winnerId)
+        : undefined;
+      this.updateHud(false);
+      return;
+    }
     const bombTargetX = match.bomb.state === "HELD"
       ? match.bomb.x
       : match.bomb.x + match.bomb.velocityX * predictionSeconds;
@@ -1071,6 +1190,11 @@ export class GameScene extends Phaser.Scene {
     player.container.setVisible(snapshot.alive);
     player.container.setAlpha(snapshot.alive ? 1 : 0.2);
     player.container.setScale(snapshot.alive ? 1 : 0.72);
+    if (this.isOnlineGuest() && player === this.human) {
+      player.setBombHolder(snapshot.hasBomb);
+      return;
+    }
+    this.processRemotePlayerDash(player, snapshot);
     const targetX = snapshot.x + (snapshot.velocityX ?? 0) * predictionSeconds;
     const targetY = snapshot.y + (snapshot.velocityY ?? 0) * predictionSeconds;
     const distanceToTarget = Phaser.Math.Distance.Between(player.x, player.y, targetX, targetY);
@@ -1105,22 +1229,25 @@ export class GameScene extends Phaser.Scene {
 
     const existing = this.remotePlayerSlots.get(snapshot.id);
     if (existing) {
-      return existing;
+      return existing.player;
     }
 
-    const slot = this.players.find((player) => (
-      player !== this.human &&
-      player.kind === "bot" &&
-      !this.remotePlayerSlots.has(player.id)
-    ));
+    const slot = (
+      snapshot.slotId ? this.players.find((player) => player.id === snapshot.slotId) : undefined
+    ) ?? this.players.find((player) => (
+          player !== this.human &&
+          player.kind === "bot" &&
+          !Array.from(this.remotePlayerSlots.values()).some((remoteSlot) => remoteSlot.player === player)
+        ));
     if (!slot) {
       return undefined;
     }
 
+    const slotId = snapshot.slotId ?? slot.id;
     slot.id = snapshot.id;
     slot.name = snapshot.name;
     slot.label.setText(snapshot.name);
-    this.remotePlayerSlots.set(snapshot.id, slot);
+    this.remotePlayerSlots.set(snapshot.id, { player: slot, slotId });
     return slot;
   }
 
@@ -1347,9 +1474,12 @@ export class GameScene extends Phaser.Scene {
     this.lastOnlineHomingTargetId = null;
     this.onlineKnownLives.clear();
     this.remotePlayerSlots.clear();
+    this.remotePlayerTargets.clear();
     this.processedRemoteActions.clear();
+    this.processedRemoteDashes.clear();
     this.pendingOnlineActionSeq = 0;
     this.pendingOnlineActionType = undefined;
+    this.pendingOnlineDashSeq = 0;
     this.clearOnlineShotVisuals();
     this.clearOnlinePickupVisuals();
   }
@@ -1585,7 +1715,7 @@ export class GameScene extends Phaser.Scene {
 
   private updateBotWeaponActions() {
     for (const bot of this.players) {
-      if (bot.kind !== "bot" || !bot.alive || !bot.hasWeapon || this.bomb.owner === bot) {
+      if (!this.isBotControlledPlayer(bot) || !bot.alive || !bot.hasWeapon || this.bomb.owner === bot) {
         continue;
       }
 
@@ -1806,7 +1936,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateBotThrows() {
-    if (this.bomb.state !== "HELD" || this.bomb.owner.kind !== "bot") {
+    if (this.bomb.state !== "HELD" || !this.isBotControlledPlayer(this.bomb.owner)) {
       return;
     }
 

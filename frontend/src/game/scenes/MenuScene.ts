@@ -719,7 +719,7 @@ export class MenuScene extends Phaser.Scene {
       enabled: true,
       role: "host",
       roomCode: this.createRoomCode(),
-      playerId: this.settings.online.playerId || createPlayerId()
+      playerId: createPlayerId()
     };
     saveSettings(this.settings);
     this.scene.start("LobbyScene", this.settings);
@@ -734,7 +734,7 @@ export class MenuScene extends Phaser.Scene {
         enabled: true,
         role: "guest",
         roomCode: code,
-        playerId: this.settings.online.playerId || createPlayerId()
+        playerId: createPlayerId()
       };
       saveSettings(this.settings);
       this.scene.start("LobbyScene", this.settings);

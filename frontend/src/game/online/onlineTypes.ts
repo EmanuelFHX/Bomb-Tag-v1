@@ -13,11 +13,15 @@ export type OnlinePlayerSnapshot = {
   hasWeapon: boolean;
   actionSeq?: number;
   actionType?: "primary";
+  dashSeq?: number;
+  dashX?: number;
+  dashY?: number;
   updatedAt: number;
 };
 
 export type OnlineMatchPlayerState = {
   id: string;
+  slotId?: string;
   name: string;
   color: number;
   x: number;
@@ -30,6 +34,9 @@ export type OnlineMatchPlayerState = {
   lives: number;
   hasBomb: boolean;
   hasWeapon: boolean;
+  dashSeq?: number;
+  dashX?: number;
+  dashY?: number;
 };
 
 export type OnlineMatchBombState = {

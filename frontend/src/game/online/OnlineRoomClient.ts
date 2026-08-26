@@ -11,7 +11,7 @@ type OnlineRoomClientOptions = {
   onError: () => void;
 };
 
-const PLAYER_WRITE_INTERVAL_MS = 66;
+const PLAYER_WRITE_INTERVAL_MS = 33;
 const MATCH_WRITE_INTERVAL_MS = 66;
 
 export class OnlineRoomClient {
@@ -130,7 +130,7 @@ export class OnlineRoomClient {
 
     try {
       const playerRef = ref(database, `rooms/${this.roomCode}/players/${this.playerId}`);
-      const payload = {
+      const payload: Record<string, unknown> = {
         ...snapshot,
         id: this.playerId,
         name: this.playerName,
@@ -138,7 +138,7 @@ export class OnlineRoomClient {
         updatedAt: serverTimestamp()
       };
       if (!payload.actionType) {
-        delete payload.actionType;
+        payload.actionType = null;
       }
       void update(playerRef, payload).catch(() => this.onError());
       return true;
