@@ -11,6 +11,8 @@ export type OnlinePlayerSnapshot = {
   alive: boolean;
   hasBomb: boolean;
   hasWeapon: boolean;
+  actionSeq?: number;
+  actionType?: "primary";
   updatedAt: number;
 };
 

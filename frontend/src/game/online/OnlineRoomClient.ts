@@ -118,7 +118,7 @@ export class OnlineRoomClient {
 
   updatePlayer(snapshot: Omit<OnlinePlayerSnapshot, "id" | "name" | "color" | "updatedAt">) {
     const now = performance.now();
-    if (now - this.lastWriteAt < PLAYER_WRITE_INTERVAL_MS) {
+    if (!snapshot.actionType && now - this.lastWriteAt < PLAYER_WRITE_INTERVAL_MS) {
       return true;
     }
 
@@ -130,13 +130,17 @@ export class OnlineRoomClient {
 
     try {
       const playerRef = ref(database, `rooms/${this.roomCode}/players/${this.playerId}`);
-      void update(playerRef, {
+      const payload = {
         ...snapshot,
         id: this.playerId,
         name: this.playerName,
         color: this.playerColor,
         updatedAt: serverTimestamp()
-      }).catch(() => this.onError());
+      };
+      if (!payload.actionType) {
+        delete payload.actionType;
+      }
+      void update(playerRef, payload).catch(() => this.onError());
       return true;
     } catch {
       return false;

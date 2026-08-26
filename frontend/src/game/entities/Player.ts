@@ -8,9 +8,9 @@ type DashCharge = {
 };
 
 export class Player {
-  readonly id: string;
+  id: string;
   readonly kind: PlayerKind;
-  readonly name: string;
+  name: string;
   readonly color: number;
   readonly container: Phaser.GameObjects.Container;
   readonly body: Phaser.GameObjects.Arc;

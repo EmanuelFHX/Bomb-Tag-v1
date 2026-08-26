@@ -205,6 +205,10 @@ export class GameScene extends Phaser.Scene {
   private onlineConnecting = false;
   private onlineHostHeartbeat?: number;
   private remoteAvatars = new Map<string, RemoteAvatar>();
+  private remotePlayerSlots = new Map<string, Player>();
+  private processedRemoteActions = new Map<string, number>();
+  private pendingOnlineActionSeq = 0;
+  private pendingOnlineActionType: OnlinePlayerSnapshot["actionType"];
   private onlineShotVisuals = new Map<string, OnlineShotVisual>();
   private onlinePickupVisuals = new Map<string, OnlinePickupVisual>();
   private latestOnlineMatch?: OnlineMatchState;
@@ -251,7 +255,7 @@ export class GameScene extends Phaser.Scene {
       this.audio.unlock();
       this.startMatchMusic();
       this.primeFinalBattleMusic();
-      if (pointer.leftButtonDown() && !this.isOnlineGuest() && !this.roundResolving && !this.matchOver) {
+      if (pointer.leftButtonDown() && !this.roundResolving && !this.matchOver) {
         this.handleHumanAction();
       }
     });
@@ -270,6 +274,8 @@ export class GameScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     if (this.isOnlineGuest()) {
+      this.updateOnlineGuestInput(delta / 1000);
+      this.syncOnlinePlayer();
       this.updateGuestOnlineView(delta / 1000);
       this.updateHomingIndicator();
       this.updateDebugSnapshot();
@@ -302,7 +308,7 @@ export class GameScene extends Phaser.Scene {
     );
 
     for (const player of this.players) {
-      if (player.kind === "bot") {
+      if (player.kind === "bot" && !this.remotePlayerSlots.has(player.id)) {
         const intent = this.getBotIntent(player);
         player.updateBot(deltaSeconds, intent.aimTarget, intent.moveDirection, intent.shouldDash);
       }
@@ -371,7 +377,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createPlayers() {
-    this.human = new Player(this, "p1", "human", TEXT[this.language].humanName, 270, 360, PLAYER_COLORS[0]);
+    const humanId = this.settings.online.enabled && this.settings.online.playerId
+      ? this.settings.online.playerId
+      : "p1";
+    this.human = new Player(this, humanId, "human", TEXT[this.language].humanName, 270, 360, PLAYER_COLORS[0]);
     this.players.push(this.human);
 
     const botPositions = [
@@ -460,12 +469,23 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleHumanAction() {
+    if (this.isOnlineGuest()) {
+      this.queueOnlinePlayerAction("primary");
+      return;
+    }
+
     if (this.bomb.state === "HELD" && this.bomb.owner === this.human) {
       this.launchBomb(this.human.aimDirection.clone());
       return;
     }
 
     this.fireWeapon(this.human, this.human.aimDirection.clone());
+  }
+
+  private queueOnlinePlayerAction(actionType: OnlinePlayerSnapshot["actionType"]) {
+    this.pendingOnlineActionSeq += 1;
+    this.pendingOnlineActionType = actionType;
+    this.syncOnlinePlayer();
   }
 
   private launchBomb(direction: Phaser.Math.Vector2) {
@@ -643,10 +663,33 @@ export class GameScene extends Phaser.Scene {
       aimY: Number(this.human.aimDirection.y.toFixed(3)),
       alive: this.human.alive,
       hasBomb: this.bomb.owner === this.human,
-      hasWeapon: this.human.hasWeapon
+      hasWeapon: this.human.hasWeapon,
+      actionSeq: this.pendingOnlineActionSeq,
+      actionType: this.pendingOnlineActionType
     });
+    this.pendingOnlineActionType = undefined;
     if (!updated) {
       this.disableOnlineMode();
+    }
+  }
+
+  private updateOnlineGuestInput(deltaSeconds: number) {
+    if (this.roundResolving || this.matchOver) {
+      return;
+    }
+
+    const pointer = this.input.activePointer;
+    const pointerWorld = new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
+    const moveDirection = this.inputSystem.getMoveDirection();
+    this.human.updateHuman(
+      deltaSeconds,
+      moveDirection,
+      pointerWorld,
+      this.inputSystem.consumeDashPressed()
+    );
+    this.human.keepInside(this.arenaRect);
+    if (this.arenaPolygon) {
+      this.human.keepInsidePolygon(this.arenaPolygon, this.arenaPolygonCenter);
     }
   }
 
@@ -760,7 +803,20 @@ export class GameScene extends Phaser.Scene {
       }
 
       seen.add(snapshot.id);
-      this.updateRemoteAvatar(snapshot);
+      this.updateRemoteControlledPlayer(snapshot);
+    }
+
+    for (const [id, player] of this.remotePlayerSlots) {
+      if (seen.has(id)) {
+        continue;
+      }
+
+      this.remotePlayerSlots.delete(id);
+      this.processedRemoteActions.delete(id);
+      if (player.alive) {
+        player.setEliminated();
+        player.setBombHolder(false);
+      }
     }
 
     for (const [id, avatar] of this.remoteAvatars) {
@@ -771,6 +827,74 @@ export class GameScene extends Phaser.Scene {
       avatar.container.destroy(true);
       this.remoteAvatars.delete(id);
     }
+  }
+
+  private updateRemoteControlledPlayer(snapshot: OnlinePlayerSnapshot) {
+    const player = this.getRemotePlayerSlot(snapshot);
+    if (!player) {
+      this.updateRemoteAvatar(snapshot);
+      return;
+    }
+
+    player.name = snapshot.name;
+    player.label.setText(snapshot.name);
+    player.container.setPosition(snapshot.x, snapshot.y);
+    player.velocity.set(snapshot.velocityX, snapshot.velocityY);
+    player.aimDirection.set(snapshot.aimX, snapshot.aimY);
+    if (player.aimDirection.lengthSq() > 0) {
+      player.aimDirection.normalize();
+      player.aim.rotation = player.aimDirection.angle();
+    }
+    player.keepInside(this.arenaRect);
+    if (this.arenaPolygon) {
+      player.keepInsidePolygon(this.arenaPolygon, this.arenaPolygonCenter);
+    }
+    player.setBombHolder(this.bomb.owner === player);
+    this.processRemotePlayerAction(player, snapshot);
+  }
+
+  private getRemotePlayerSlot(snapshot: OnlinePlayerSnapshot) {
+    const existing = this.remotePlayerSlots.get(snapshot.id);
+    if (existing) {
+      return existing;
+    }
+
+    const slot = this.players.find((player) => (
+      player.kind === "bot" &&
+      player.alive &&
+      !this.remotePlayerSlots.has(player.id)
+    ));
+    if (!slot) {
+      return undefined;
+    }
+
+    this.botThrowReadyAt.delete(slot.id);
+    this.botShotReadyAt.delete(slot.id);
+    slot.id = snapshot.id;
+    slot.name = snapshot.name;
+    slot.label.setText(snapshot.name);
+    slot.body.setStrokeStyle(3, 0xffffff, 0.75);
+    this.remotePlayerSlots.set(snapshot.id, slot);
+    return slot;
+  }
+
+  private processRemotePlayerAction(player: Player, snapshot: OnlinePlayerSnapshot) {
+    if (!snapshot.actionSeq || snapshot.actionType !== "primary") {
+      return;
+    }
+
+    const previousSeq = this.processedRemoteActions.get(snapshot.id) ?? 0;
+    if (snapshot.actionSeq <= previousSeq || this.roundResolving || this.matchOver) {
+      return;
+    }
+
+    this.processedRemoteActions.set(snapshot.id, snapshot.actionSeq);
+    if (this.bomb.state === "HELD" && this.bomb.owner === player) {
+      this.launchBomb(player.aimDirection.clone());
+      return;
+    }
+
+    this.fireWeapon(player, player.aimDirection.clone());
   }
 
   private updateRemoteAvatar(snapshot: OnlinePlayerSnapshot) {
@@ -865,7 +989,7 @@ export class GameScene extends Phaser.Scene {
     const blend = 1 - Math.exp(-deltaSeconds * 12);
     const predictionSeconds = Math.min(0.14, Math.max(0, snapshotAge / 1000));
     for (const snapshot of match.players) {
-      const player = this.players.find((candidate) => candidate.id === snapshot.id);
+      const player = this.getOnlineRenderedPlayer(snapshot);
       if (!player) {
         continue;
       }
@@ -967,6 +1091,37 @@ export class GameScene extends Phaser.Scene {
     player.label.setText(snapshot.name);
     player.body.setFillStyle(snapshot.color, 1);
     player.setBombHolder(snapshot.hasBomb);
+  }
+
+  private getOnlineRenderedPlayer(snapshot: OnlineMatchPlayerState) {
+    if (snapshot.id === this.settings.online.playerId) {
+      return this.human;
+    }
+
+    const direct = this.players.find((player) => player.id === snapshot.id);
+    if (direct) {
+      return direct;
+    }
+
+    const existing = this.remotePlayerSlots.get(snapshot.id);
+    if (existing) {
+      return existing;
+    }
+
+    const slot = this.players.find((player) => (
+      player !== this.human &&
+      player.kind === "bot" &&
+      !this.remotePlayerSlots.has(player.id)
+    ));
+    if (!slot) {
+      return undefined;
+    }
+
+    slot.id = snapshot.id;
+    slot.name = snapshot.name;
+    slot.label.setText(snapshot.name);
+    this.remotePlayerSlots.set(snapshot.id, slot);
+    return slot;
   }
 
   private applyOnlineShots(shots: OnlineShotState[], deltaSeconds: number) {
@@ -1191,6 +1346,10 @@ export class GameScene extends Phaser.Scene {
     this.onlineEventsPrimed = false;
     this.lastOnlineHomingTargetId = null;
     this.onlineKnownLives.clear();
+    this.remotePlayerSlots.clear();
+    this.processedRemoteActions.clear();
+    this.pendingOnlineActionSeq = 0;
+    this.pendingOnlineActionType = undefined;
     this.clearOnlineShotVisuals();
     this.clearOnlinePickupVisuals();
   }
