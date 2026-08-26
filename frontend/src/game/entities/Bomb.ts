@@ -18,10 +18,13 @@ export class Bomb {
   canTransferAt = 0;
   speedMultiplier = 1;
   homingTarget: Player | null = null;
+  isParryFlaming = false;
+  breaksParry = false;
 
   private readonly scene: Phaser.Scene;
-  private readonly trail: Phaser.GameObjects.Arc[] = [];
-  private trailIndex = 0;
+  private readonly trailGraphics: Phaser.GameObjects.Graphics;
+  private readonly fireGraphics: Phaser.GameObjects.Graphics;
+  private readonly trailPoints: Phaser.Math.Vector2[] = [];
   private nextTrailAt = 0;
   private lastVisualState: BombState | "" = "";
 
@@ -35,12 +38,13 @@ export class Bomb {
     this.fuse.setStrokeStyle(2, 0xff5d4f, 0.55);
     this.directionRing = scene.add.circle(owner.x, owner.y, BOMB.radius + 12, 0xffffff, 0);
     this.directionRing.setStrokeStyle(2, 0xffd240, 0);
-
-    for (let index = 0; index < 8; index += 1) {
-      const trailDot = scene.add.circle(owner.x, owner.y, BOMB.radius - 2, 0xffd240, 0);
-      trailDot.setDepth(-1);
-      this.trail.push(trailDot);
-    }
+    this.trailGraphics = scene.add.graphics();
+    this.trailGraphics.setDepth(2);
+    this.fireGraphics = scene.add.graphics();
+    this.fireGraphics.setDepth(4);
+    this.shape.setDepth(5);
+    this.fuse.setDepth(4);
+    this.directionRing.setDepth(4);
 
     this.syncHeldPosition();
   }
@@ -61,6 +65,8 @@ export class Bomb {
     this.ricochets = 0;
     this.canTransferAt = this.scene.time.now + BOMB.transferCooldownMs;
     this.homingTarget = null;
+    this.breaksParry = false;
+    this.setParryFlaming(false);
     this.syncHeldPosition();
     this.setVisible(true);
   }
@@ -69,37 +75,52 @@ export class Bomb {
     this.shape.setVisible(isVisible);
     this.fuse.setVisible(isVisible);
     this.directionRing.setVisible(isVisible);
-    for (const trailDot of this.trail) {
-      trailDot.setVisible(isVisible);
-      if (!isVisible) {
-        trailDot.setAlpha(0);
-      }
+    this.trailGraphics.setVisible(isVisible);
+    this.fireGraphics.setVisible(isVisible);
+    if (!isVisible) {
+      this.clearTrail();
+      this.fireGraphics.clear();
     }
   }
 
   setIntensity(speedMultiplier: number) {
     this.speedMultiplier = speedMultiplier;
-    const color = speedMultiplier >= 2 ? 0xff5d4f : speedMultiplier >= 1.5 ? 0xff8f3d : 0xffd240;
+    const color = this.isParryFlaming ? 0xff5d1a : speedMultiplier >= 2 ? 0xff5d4f : speedMultiplier >= 1.5 ? 0xff8f3d : 0xffd240;
     this.shape.setFillStyle(color, 1);
     this.fuse.setStrokeStyle(2, color, speedMultiplier >= 1.5 ? 0.8 : 0.55);
+  }
+
+  setParryFlaming(isFlaming: boolean) {
+    this.isParryFlaming = isFlaming;
+    this.lastVisualState = "";
+    this.setIntensity(this.speedMultiplier);
+    if (!isFlaming) {
+      this.fireGraphics.clear();
+    }
+    this.applyVisualState();
   }
 
   setHomingTarget(target: Player | null) {
     this.homingTarget = target;
   }
 
-  launch(direction: Phaser.Math.Vector2) {
+  launch(direction: Phaser.Math.Vector2, throwSpeedMultiplier = 1, breaksParry = false) {
     if (this.state !== "HELD" || direction.lengthSq() === 0) {
       return false;
     }
 
     this.state = "OUTBOUND";
     this.responsible = this.owner;
-    this.velocity.copy(direction.normalize().scale(BOMB.speed * this.speedMultiplier));
+    this.velocity.copy(direction.normalize().scale(BOMB.speed * this.speedMultiplier * throwSpeedMultiplier));
     this.launchedAt = this.scene.time.now;
     this.ricochets = 0;
     this.canTransferAt = this.scene.time.now + BOMB.transferCooldownMs;
     this.homingTarget = null;
+    this.breaksParry = breaksParry;
+    this.setParryFlaming(false);
+    if (breaksParry) {
+      this.setParryFlaming(true);
+    }
     this.clearTrail();
     this.applyVisualState();
     return true;
@@ -120,6 +141,8 @@ export class Bomb {
     this.ricochets = 0;
     this.canTransferAt = this.scene.time.now + BOMB.parryTransferCooldownMs;
     this.homingTarget = target;
+    this.breaksParry = false;
+    this.setParryFlaming(true);
     this.clearTrail();
     this.applyVisualState();
     return true;
@@ -154,11 +177,14 @@ export class Bomb {
     this.shape.y += this.velocity.y * deltaSeconds;
     this.fuse.setPosition(this.shape.x, this.shape.y);
     this.directionRing.setPosition(this.shape.x, this.shape.y);
-    this.spawnTrail();
     this.resolveWallBounce(arena);
     if (polygon && polygonCenter) {
       this.resolvePolygonBounce(polygon, polygonCenter);
     }
+    this.fuse.setPosition(this.shape.x, this.shape.y);
+    this.directionRing.setPosition(this.shape.x, this.shape.y);
+    this.updateTrail();
+    this.updateFire();
   }
 
   playTransferBurst(isSpecial: boolean) {
@@ -190,11 +216,25 @@ export class Bomb {
     return false;
   }
 
+  updateRemoteVisuals() {
+    if (this.state === "HELD") {
+      this.clearTrail();
+      this.updateFire();
+      this.applyVisualState();
+      return;
+    }
+
+    this.updateTrail();
+    this.updateFire();
+    this.applyVisualState();
+  }
+
   private syncHeldPosition() {
     const offset = this.owner.aimDirection.clone().scale(BOMB.heldOffset);
     this.shape.setPosition(this.owner.x + offset.x, this.owner.y + offset.y);
     this.fuse.setPosition(this.shape.x, this.shape.y);
     this.directionRing.setPosition(this.shape.x, this.shape.y);
+    this.updateFire();
     this.applyVisualState();
   }
 
@@ -349,43 +389,85 @@ export class Bomb {
     }
 
     if (this.state === "OUTBOUND") {
-      this.shape.setStrokeStyle(4, 0x1b1d22, 1);
-      this.fuse.setStrokeStyle(2, 0xffd240, 0.65);
-      this.directionRing.setStrokeStyle(2, 0xffd240, 0.35);
+      this.shape.setStrokeStyle(4, this.isParryFlaming ? 0xfff0a6 : 0x1b1d22, 1);
+      this.fuse.setStrokeStyle(2, this.isParryFlaming ? 0xff5d1a : 0xffd240, this.isParryFlaming ? 0.95 : 0.65);
+      this.directionRing.setStrokeStyle(2, this.isParryFlaming ? 0xff8f3d : 0xffd240, this.isParryFlaming ? 0.7 : 0.35);
       return;
     }
 
     this.directionRing.setStrokeStyle(2, 0xffd240, 0);
   }
 
-  private spawnTrail() {
+  private updateTrail() {
     if (this.state === "HELD" || this.scene.time.now < this.nextTrailAt) {
       return;
     }
 
-    this.nextTrailAt = this.scene.time.now + 34;
-    const trailDot = this.trail[this.trailIndex];
+    this.nextTrailAt = this.scene.time.now + 20;
+    this.trailPoints.push(new Phaser.Math.Vector2(this.shape.x, this.shape.y));
+    if (this.trailPoints.length > 18) {
+      this.trailPoints.shift();
+    }
+    this.drawTrail();
+  }
+
+  private drawTrail() {
+    this.trailGraphics.clear();
+    if (this.trailPoints.length < 2) {
+      return;
+    }
+
     const isReturning = this.state === "RETURNING";
-    trailDot.setPosition(this.shape.x, this.shape.y);
-    trailDot.setFillStyle(isReturning ? 0x86f7ff : 0xffd240, isReturning ? 0.34 : 0.28);
-    trailDot.setScale(isReturning ? 0.9 : 0.78);
-    trailDot.setAlpha(isReturning ? 0.34 : 0.28);
-    trailDot.setVisible(true);
-    this.scene.tweens.killTweensOf(trailDot);
-    this.scene.tweens.add({
-      targets: trailDot,
-      scale: 0.18,
-      alpha: 0,
-      duration: isReturning ? 220 : 180,
-      ease: "Quad.easeOut"
-    });
-    this.trailIndex = (this.trailIndex + 1) % this.trail.length;
+    const color = this.isParryFlaming ? 0xff5d1a : isReturning ? 0x86f7ff : 0xffd240;
+    for (let index = 1; index < this.trailPoints.length; index += 1) {
+      const previous = this.trailPoints[index - 1];
+      const point = this.trailPoints[index];
+      const progress = index / (this.trailPoints.length - 1);
+      this.trailGraphics.lineStyle(
+        Phaser.Math.Linear(isReturning ? 3 : 4, this.isParryFlaming ? 13 : isReturning ? 8 : 10, progress),
+        color,
+        Phaser.Math.Linear(0.04, this.isParryFlaming ? 0.74 : isReturning ? 0.5 : 0.58, progress)
+      );
+      this.trailGraphics.beginPath();
+      this.trailGraphics.moveTo(previous.x, previous.y);
+      this.trailGraphics.lineTo(point.x, point.y);
+      this.trailGraphics.strokePath();
+
+      if (this.isParryFlaming) {
+        this.trailGraphics.lineStyle(
+          Phaser.Math.Linear(1, 4, progress),
+          0xffcf33,
+          Phaser.Math.Linear(0.02, 0.46, progress)
+        );
+        this.trailGraphics.beginPath();
+        this.trailGraphics.moveTo(previous.x, previous.y);
+        this.trailGraphics.lineTo(point.x, point.y);
+        this.trailGraphics.strokePath();
+      }
+    }
+  }
+
+  private updateFire() {
+    this.fireGraphics.clear();
+    if (!this.isParryFlaming || this.state === "HELD" || !this.shape.visible) {
+      return;
+    }
+
+    const time = this.scene.time.now * 0.018;
+    const speedAngle = this.velocity.lengthSq() > 0 ? this.velocity.angle() : 0;
+    for (let index = 0; index < 8; index += 1) {
+      const angle = speedAngle + Math.PI + (index - 3.5) * 0.34 + Math.sin(time + index) * 0.08;
+      const distance = 13 + Math.sin(time * 1.3 + index) * 5;
+      const radius = 7 + Math.sin(time * 1.7 + index * 2) * 2;
+      const x = this.shape.x + Math.cos(angle) * distance;
+      const y = this.shape.y + Math.sin(angle) * distance;
+      this.fireGraphics.fillStyle(index % 2 === 0 ? 0xff5d1a : 0xffcf33, index % 2 === 0 ? 0.42 : 0.34);
+      this.fireGraphics.fillCircle(x, y, radius);
+    }
   }
 
   private clearTrail() {
-    for (const trailDot of this.trail) {
-      this.scene.tweens.killTweensOf(trailDot);
-      trailDot.setAlpha(0);
-    }
+    this.trailPoints.length = 0;
+    this.trailGraphics.clear();
   }
 }

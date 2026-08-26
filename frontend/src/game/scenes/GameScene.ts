@@ -23,6 +23,7 @@ type BotIntent = {
   aimTarget: Phaser.Math.Vector2;
   moveDirection: Phaser.Math.Vector2;
   shouldDash: boolean;
+  shouldParry: boolean;
 };
 
 type WeaponPickup = {
@@ -69,6 +70,13 @@ type RemotePlayerTarget = {
 type RemotePlayerSlot = {
   player: Player;
   slotId: string;
+};
+
+type SpinThrowTracker = {
+  lastAngle: number;
+  startedAt: number;
+  turnAmount: number;
+  readyUntil: number;
 };
 
 type OnlineShotVisual = {
@@ -207,8 +215,10 @@ export class GameScene extends Phaser.Scene {
   private nextCriticalPulseAt = 0;
   private botThrowReadyAt = new Map<string, number>();
   private botShotReadyAt = new Map<string, number>();
+  private botParryThinkAt = new Map<string, number>();
   private parryReadyAt = new Map<string, number>();
   private parryActiveUntil = new Map<string, number>();
+  private spinThrowTrackers = new Map<string, SpinThrowTracker>();
   private weaponPickups: WeaponPickup[] = [];
   private shots: Shot[] = [];
   private weaponPickupSequence = 0;
@@ -335,17 +345,23 @@ export class GameScene extends Phaser.Scene {
       pointerWorld,
       this.inputSystem.consumeDashPressed()
     );
+    this.updateSpinThrowReadiness(this.human);
 
     for (const player of this.players) {
       if (this.isBotControlledPlayer(player)) {
         const intent = this.getBotIntent(player);
         const previousDashSeq = player.dashVisualSequence;
+        if (intent.shouldParry) {
+          this.tryParry(player);
+        }
         player.updateBot(deltaSeconds, intent.aimTarget, intent.moveDirection, intent.shouldDash);
+        this.updateSpinThrowReadiness(player);
         if (player.dashVisualSequence !== previousDashSeq) {
           forceOnlineMatchSync = true;
         }
       } else if (this.isRemoteControlledPlayer(player)) {
         this.updateRemoteControlledSlot(player, deltaSeconds);
+        this.updateSpinThrowReadiness(player);
       }
       player.keepInside(this.arenaRect);
       if (this.arenaPolygon) {
@@ -535,12 +551,17 @@ export class GameScene extends Phaser.Scene {
 
   private launchBomb(direction: Phaser.Math.Vector2) {
     const owner = this.bomb.owner;
-    const homingTarget = this.isFinalPhase() ? this.getSpecialBombTarget(owner, direction) : null;
-    const launched = this.bomb.launch(direction);
+    const isFinalPhase = this.isFinalPhase();
+    const homingTarget = isFinalPhase ? this.getSpecialBombTarget(owner, direction) : null;
+    const hasSpinBoost = this.consumeSpinThrowBoost(owner);
+    const launched = this.bomb.launch(direction, hasSpinBoost ? BOMB.spinThrowSpeedMultiplier : 1, hasSpinBoost && isFinalPhase);
     if (!launched) {
       return launched;
     }
 
+    if (hasSpinBoost) {
+      this.playSpinThrowEffect(owner);
+    }
     this.bomb.setHomingTarget(homingTarget);
     if (homingTarget) {
       this.showHomingIndicator(homingTarget);
@@ -555,6 +576,58 @@ export class GameScene extends Phaser.Scene {
     );
     this.bomb.setIntensity(this.baseBombSpeedMultiplier * (1 + this.specialBombSpeedBonus));
     return launched;
+  }
+
+  private updateSpinThrowReadiness(player: Player) {
+    if (this.bomb.state !== "HELD" || this.bomb.owner !== player || !player.alive) {
+      this.spinThrowTrackers.delete(player.id);
+      return;
+    }
+
+    const now = this.time.now;
+    const angle = player.aimDirection.angle();
+    const tracker = this.spinThrowTrackers.get(player.id);
+    if (!tracker) {
+      this.spinThrowTrackers.set(player.id, {
+        lastAngle: angle,
+        startedAt: now,
+        turnAmount: 0,
+        readyUntil: 0
+      });
+      return;
+    }
+
+    const delta = Math.abs(Phaser.Math.Angle.Wrap(angle - tracker.lastAngle));
+    if (now - tracker.startedAt > BOMB.spinThrowWindowMs) {
+      tracker.startedAt = now;
+      tracker.turnAmount = 0;
+    }
+
+    tracker.lastAngle = angle;
+    if (now <= tracker.readyUntil) {
+      return;
+    }
+
+    tracker.turnAmount += delta;
+    if (tracker.turnAmount < BOMB.spinThrowMinRadians) {
+      return;
+    }
+
+    tracker.startedAt = now;
+    tracker.turnAmount = 0;
+    tracker.readyUntil = now + BOMB.spinThrowReadyMs;
+    this.playSpinReadyEffect(player);
+  }
+
+  private consumeSpinThrowBoost(player: Player) {
+    const tracker = this.spinThrowTrackers.get(player.id);
+    if (!tracker || this.time.now > tracker.readyUntil) {
+      this.spinThrowTrackers.delete(player.id);
+      return false;
+    }
+
+    this.spinThrowTrackers.delete(player.id);
+    return true;
   }
 
   private tryParry(player: Player) {
@@ -598,6 +671,10 @@ export class GameScene extends Phaser.Scene {
     const distance = Phaser.Math.Distance.Between(this.bomb.x, this.bomb.y, player.x, player.y);
     const toPlayer = new Phaser.Math.Vector2(player.x - this.bomb.x, player.y - this.bomb.y);
     const movingTowardPlayer = toPlayer.lengthSq() > 0 && this.bomb.velocity.clone().normalize().dot(toPlayer.normalize()) > 0.35;
+    if (this.bomb.breaksParry && distance <= BOMB.parryBlockDistance && movingTowardPlayer) {
+      return this.completeParry(player, false);
+    }
+
     if (distance <= BOMB.parryPerfectDistance && movingTowardPlayer) {
       return this.completeParry(player, true);
     }
@@ -829,6 +906,7 @@ export class GameScene extends Phaser.Scene {
       pointerWorld,
       dashPressed
     );
+    this.updateSpinThrowReadiness(this.human);
     this.human.keepInside(this.arenaRect);
     if (this.arenaPolygon) {
       this.human.keepInsidePolygon(this.arenaPolygon, this.arenaPolygonCenter);
@@ -885,7 +963,9 @@ export class GameScene extends Phaser.Scene {
         velocityY: Math.round(this.bomb.velocity.y),
         speedMultiplier: Number(this.bomb.speedMultiplier.toFixed(3)),
         homingTargetId: this.bomb.homingTarget?.id ?? null,
-        visible: this.bomb.shape.visible
+        visible: this.bomb.shape.visible,
+        isParryFlaming: this.bomb.isParryFlaming,
+        breaksParry: this.bomb.breaksParry
       },
       arena: {
         aliveCount: this.getAlivePlayers().length,
@@ -994,6 +1074,12 @@ export class GameScene extends Phaser.Scene {
 
     player.name = snapshot.name;
     player.label.setText(snapshot.name);
+    player.aimDirection.set(snapshot.aimX, snapshot.aimY);
+    if (player.aimDirection.lengthSq() > 0) {
+      player.aimDirection.normalize();
+      player.aim.rotation = player.aimDirection.angle();
+    }
+    this.updateSpinThrowReadiness(player);
     this.remotePlayerTargets.set(snapshot.id, {
       x: snapshot.x,
       y: snapshot.y,
@@ -1051,6 +1137,7 @@ export class GameScene extends Phaser.Scene {
 
     this.botThrowReadyAt.delete(slot.id);
     this.botShotReadyAt.delete(slot.id);
+    this.botParryThinkAt.delete(slot.id);
     const slotId = slot.id;
     slot.id = snapshot.id;
     slot.name = snapshot.name;
@@ -1222,6 +1309,8 @@ export class GameScene extends Phaser.Scene {
     this.bomb.state = match.bomb.state;
     this.bomb.velocity.set(match.bomb.velocityX, match.bomb.velocityY);
     this.bomb.setIntensity(match.bomb.speedMultiplier ?? this.baseBombSpeedMultiplier);
+    this.bomb.breaksParry = Boolean(match.bomb.breaksParry);
+    this.bomb.setParryFlaming(Boolean(match.bomb.isParryFlaming));
     const homingTarget = match.bomb.homingTargetId
       ? this.players.find((player) => player.id === match.bomb.homingTargetId) ?? null
       : null;
@@ -1240,6 +1329,7 @@ export class GameScene extends Phaser.Scene {
       );
       this.bomb.fuse.setPosition(this.bomb.shape.x, this.bomb.shape.y);
       this.bomb.directionRing.setPosition(this.bomb.shape.x, this.bomb.shape.y);
+      this.bomb.updateRemoteVisuals();
       this.applyOnlineShots(match.shots ?? [], deltaSeconds);
       this.applyOnlinePickups(match.pickups ?? []);
       this.roundResolving = match.round.resolving;
@@ -1265,6 +1355,7 @@ export class GameScene extends Phaser.Scene {
     this.bomb.shape.setPosition(bombX, bombY);
     this.bomb.fuse.setPosition(bombX, bombY);
     this.bomb.directionRing.setPosition(bombX, bombY);
+    this.bomb.updateRemoteVisuals();
     this.applyOnlineShots(match.shots ?? [], deltaSeconds);
     this.applyOnlinePickups(match.pickups ?? []);
 
@@ -1518,6 +1609,8 @@ export class GameScene extends Phaser.Scene {
         responsibleId: this.bomb.responsible.id,
         homingTargetId: this.bomb.homingTarget?.id ?? null,
         homingIndicatorVisible: this.homingIndicator?.graphics.visible ?? false,
+        isParryFlaming: this.bomb.isParryFlaming,
+        breaksParry: this.bomb.breaksParry,
         visible: this.bomb.shape.visible
       },
       arena: {
@@ -1591,7 +1684,9 @@ export class GameScene extends Phaser.Scene {
     this.remotePlayerTargets.clear();
     this.processedRemoteActions.clear();
     this.processedRemoteDashes.clear();
+    this.botParryThinkAt.clear();
     this.parryActiveUntil.clear();
+    this.spinThrowTrackers.clear();
     this.pendingOnlineActionSeq = 0;
     this.pendingOnlineActionType = undefined;
     this.pendingOnlineDashSeq = 0;
@@ -2039,6 +2134,47 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private playSpinReadyEffect(player: Player) {
+    const ring = this.add.circle(player.x, player.y, PLAYER.radius + 18, 0xffcf33, 0.08);
+    ring.setStrokeStyle(3, 0xffcf33, 0.72);
+    ring.setDepth(8);
+    this.tweens.add({
+      targets: ring,
+      scale: 1.9,
+      alpha: 0,
+      duration: 260,
+      ease: "Quad.easeOut",
+      onComplete: () => ring.destroy()
+    });
+  }
+
+  private playSpinThrowEffect(player: Player) {
+    const direction = player.aimDirection.clone();
+    if (direction.lengthSq() === 0) {
+      return;
+    }
+
+    direction.normalize();
+    const burst = this.add.rectangle(
+      player.x + direction.x * 26,
+      player.y + direction.y * 26,
+      84,
+      9,
+      0xffcf33,
+      0.86
+    );
+    burst.setRotation(direction.angle());
+    burst.setDepth(7);
+    this.tweens.add({
+      targets: burst,
+      scaleX: 0.25,
+      alpha: 0,
+      duration: 170,
+      ease: "Quad.easeOut",
+      onComplete: () => burst.destroy()
+    });
+  }
+
   private showLifeLostFeedback(target: Player, x = target.x, y = target.y) {
     const lastShownAt = this.lastLifeFeedbackAt.get(target.id) ?? -Infinity;
     if (this.time.now - lastShownAt < 220) {
@@ -2393,8 +2529,10 @@ export class GameScene extends Phaser.Scene {
     this.hudTimer.setScale(1);
     this.audio.resetTimerTicks();
     this.clearWeaponsAndShots();
+    this.botParryThinkAt.clear();
     this.parryReadyAt.clear();
     this.parryActiveUntil.clear();
+    this.spinThrowTrackers.clear();
     this.baseBombSpeedMultiplier = stage.bombSpeedMultiplier;
     this.specialBombSpeedBonus = 0;
     this.createArena(alivePlayers.length);
@@ -3037,11 +3175,12 @@ export class GameScene extends Phaser.Scene {
       : new Phaser.Math.Vector2(this.human.x, this.human.y);
     const moveDirection = new Phaser.Math.Vector2(0, 0);
     let shouldDash = false;
+    const shouldParry = this.shouldBotParry(bot);
     const shotThreat = this.getShotThreat(bot);
     if (shotThreat.risk > 0) {
       moveDirection.copy(shotThreat.escapeDirection);
       shouldDash = shotThreat.risk > (isFinalPhase ? 0.88 : 0.82) && bot.dashChargeCount > 0;
-      return { aimTarget, moveDirection, shouldDash };
+      return { aimTarget, moveDirection, shouldDash, shouldParry };
     }
 
     if (this.bomb.state === "HELD") {
@@ -3066,27 +3205,27 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      return { aimTarget, moveDirection, shouldDash };
+      return { aimTarget, moveDirection, shouldDash, shouldParry };
     }
 
     const threat = this.getBombThreat(bot);
     if (threat.risk > 0) {
       moveDirection.copy(threat.escapeDirection);
       shouldDash = threat.risk > (isFinalPhase ? 0.86 : 0.78) && bot.dashChargeCount > 0;
-      return { aimTarget, moveDirection, shouldDash };
+      return { aimTarget, moveDirection, shouldDash, shouldParry };
     }
 
     const armedThreat = this.getArmedOpponentThreat(bot);
     if (armedThreat.risk > 0) {
       moveDirection.copy(armedThreat.escapeDirection);
       shouldDash = armedThreat.risk > (isFinalPhase ? 0.9 : 0.84) && bot.dashChargeCount > 0;
-      return { aimTarget, moveDirection, shouldDash };
+      return { aimTarget, moveDirection, shouldDash, shouldParry };
     }
 
     const pickup = this.getNearestWeaponPickup(bot);
     if (!bot.hasWeapon && pickup) {
       moveDirection.set(pickup.shape.x - bot.x, pickup.shape.y - bot.y).normalize();
-      return { aimTarget, moveDirection, shouldDash };
+      return { aimTarget, moveDirection, shouldDash, shouldParry };
     }
 
     if (this.bomb.state === "RETURNING" && this.bomb.owner !== bot) {
@@ -3096,7 +3235,51 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    return { aimTarget, moveDirection, shouldDash };
+    return { aimTarget, moveDirection, shouldDash, shouldParry };
+  }
+
+  private shouldBotParry(bot: Player) {
+    if (!this.isFinalPhase() || this.bomb.state === "HELD" || this.bomb.owner === bot || !bot.alive || this.bomb.velocity.lengthSq() === 0) {
+      return false;
+    }
+
+    const readyAt = this.parryReadyAt.get(bot.id) ?? 0;
+    if (this.time.now < readyAt) {
+      return false;
+    }
+
+    const nextThinkAt = this.botParryThinkAt.get(bot.id) ?? 0;
+    if (this.time.now < nextThinkAt) {
+      return false;
+    }
+    this.botParryThinkAt.set(bot.id, this.time.now + Phaser.Math.Between(90, 170));
+
+    const fromBombToBot = new Phaser.Math.Vector2(bot.x - this.bomb.x, bot.y - this.bomb.y);
+    const distance = fromBombToBot.length();
+    if (distance > BOMB.parryBlockDistance + 135) {
+      return false;
+    }
+
+    const bombDirection = this.bomb.velocity.clone().normalize();
+    const speed = Math.max(this.bomb.velocity.length(), 1);
+    const timeAlongPathMs = (fromBombToBot.dot(bombDirection) / speed) * 1000;
+    if (timeAlongPathMs < -40 || timeAlongPathMs > BOMB.parryWindowMs + 230) {
+      return false;
+    }
+
+    const closestPoint = new Phaser.Math.Vector2(this.bomb.x, this.bomb.y).add(
+      bombDirection.clone().scale((timeAlongPathMs / 1000) * speed)
+    );
+    const distanceToPath = Phaser.Math.Distance.Between(bot.x, bot.y, closestPoint.x, closestPoint.y);
+    if (distanceToPath > BOMB.parryBlockDistance * 0.82) {
+      return false;
+    }
+
+    const awareness = this.getBotAwareness(bot);
+    const targetBonus = this.bomb.homingTarget === bot ? 0.18 : 0;
+    const timingPressure = 1 - Phaser.Math.Clamp(Math.max(0, timeAlongPathMs) / (BOMB.parryWindowMs + 230), 0, 1);
+    const chance = Phaser.Math.Clamp(0.18 + awareness * 0.34 + timingPressure * 0.22 + targetBonus, 0, 0.72);
+    return Phaser.Math.FloatBetween(0, 1) < chance;
   }
 
   private getNearestWeaponPickup(player: Player) {
