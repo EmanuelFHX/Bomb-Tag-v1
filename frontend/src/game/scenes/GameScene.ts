@@ -656,8 +656,7 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    const initialMatch = online.role === "host" ? this.createOnlineMatchState() : undefined;
-    void client.connect((room) => this.applyOnlineRoom(room), initialMatch).then(() => {
+    void client.connect((room) => this.applyOnlineRoom(room)).then(() => {
       this.onlineClient = client;
       this.onlineConnecting = false;
       this.onlineStatusText.setText(`ONLINE ${online.roomCode}`);
@@ -872,6 +871,8 @@ export class GameScene extends Phaser.Scene {
       avatar.container.destroy(true);
       this.remoteAvatars.delete(id);
     }
+
+    this.syncOnlineMatchState(true);
   }
 
   private updateRemoteControlledPlayer(snapshot: OnlinePlayerSnapshot) {
