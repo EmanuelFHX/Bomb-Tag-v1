@@ -42,17 +42,17 @@ const MENU_TEXT = {
     nameLabel: "NOME DO PLAYER",
     start: "INICIAR PARTIDA",
     multiplayer: "MULTIPLAYER",
-    settings: "CONFIGURACOES",
+    settings: "CONFIGURAÇÕES",
     howToPlay: "COMO JOGAR",
     howToPlayTitle: "COMO JOGAR",
     howToPlayLines: [
-      "Bomb Tag e um jogo de sobrevivencia em arena: 8 jogadores entram e apenas 1 sai.",
+      "Bomb Tag é um jogo de sobrevivência em arena: 8 jogadores entram e apenas 1 sai.",
       "Segure a bomba, mire com o mouse e lance antes do timer acabar.",
-      "A bomba pode ricochetear, voltar para quem lancou e ficar teleguiada na rodada final.",
+      "A bomba pode ricochetear, voltar para quem lançou e ficar teleguiada na rodada final.",
       "Armas aparecem durante a partida. Pegue uma e atire para tirar vidas dos inimigos.",
-      "O dash da uma corrida curta e invulnerabilidade. Na rodada final, os dashes recarregam.",
-      "Na rodada final, use clique direito para dar parry. Parry perfeito devolve a bomba; parry ruim passa a bomba para voce.",
-      "Gire 180 graus segurando a bomba e lance para jogar mais rapido. Na rodada final, esse giro quebra parries."
+      "O dash dá uma corrida curta e invulnerabilidade. Na rodada final, os dashes recarregam.",
+      "Na rodada final, use clique direito para dar parry. Parry perfeito devolve a bomba; parry ruim passa a bomba para você.",
+      "Gire 180 graus segurando a bomba e lance para jogar mais rápido. Na rodada final, esse giro quebra parries."
     ],
     hostOnline: "CRIAR SALA",
     joinOnline: "ENTRAR NA SALA",
@@ -65,7 +65,7 @@ const MENU_TEXT = {
     firebaseReady: "ONLINE PRONTO",
     firebaseMissing: "FIREBASE OFF",
     promptName: "Nome do player",
-    promptRoom: "Codigo da sala",
+    promptRoom: "Código da sala",
     ok: "OK",
     cancel: "CANCELAR",
     version: "v0.1.0 DEV BUILD"
@@ -544,27 +544,27 @@ export class MenuScene extends Phaser.Scene {
 
     const panel = this.add.graphics();
     panel.setDepth(31);
-    this.drawModalPanel(panel, 310, 112, 660, 496);
+    this.drawModalPanel(panel, 290, 74, 700, 572);
     this.modalObjects.push(panel);
 
-    this.addModalText(GAME_WIDTH / 2, 146, dictionary.howToPlayTitle, {
+    this.addModalText(GAME_WIDTH / 2, 108, dictionary.howToPlayTitle, {
       color: "#ffbf16",
       fontFamily: "Arial Black, ui-sans-serif, system-ui",
       fontSize: "30px",
       fontStyle: "900"
     }).setOrigin(0.5);
 
-    const body = dictionary.howToPlayLines.map((line) => `> ${line}`).join("\n\n");
-    this.addModalText(366, 196, body, {
+    const body = dictionary.howToPlayLines.map((line, index) => `${index + 1}. ${line}`).join("\n\n");
+    this.addModalText(342, 148, body, {
       color: "#f7f8ff",
       fontFamily: "Arial Black, ui-sans-serif, system-ui",
-      fontSize: "15px",
+      fontSize: "13px",
       fontStyle: "900",
-      lineSpacing: 8,
-      wordWrap: { width: 548 }
+      lineSpacing: 4,
+      wordWrap: { width: 596 }
     });
 
-    this.createModalButton(GAME_WIDTH / 2 - 90, 536, 180, 48, dictionary.ok, () => this.closeModal(), "primary");
+    this.createModalButton(GAME_WIDTH / 2 - 90, 584, 180, 44, dictionary.ok, () => this.closeModal(), "primary");
   }
 
   private openTextModal(
