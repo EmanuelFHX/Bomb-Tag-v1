@@ -42,7 +42,11 @@ export const BOMB = {
   parryBlockDistance: 116,
   parryWindowMs: 280,
   parryCooldownMs: 820,
-  parryTransferCooldownMs: 130
+  parryTransferCooldownMs: 130,
+  spinThrowMinRadians: Math.PI * 0.82,
+  spinThrowWindowMs: 560,
+  spinThrowReadyMs: 720,
+  spinThrowSpeedMultiplier: 1.34
 } as const;
 
 export const BOT = {

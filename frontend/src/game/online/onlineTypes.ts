@@ -50,6 +50,8 @@ export type OnlineMatchBombState = {
   speedMultiplier: number;
   homingTargetId: string | null;
   visible: boolean;
+  isParryFlaming?: boolean;
+  breaksParry?: boolean;
 };
 
 export type OnlineArenaState = {
