@@ -1,91 +1,91 @@
 import Phaser from "phaser";
 import { GAME_HEIGHT, GAME_WIDTH } from "../config";
 import { hasFirebaseConfig } from "../online/firebaseClient";
-import { createPlayerId, GameSettings, loadSettings, saveSettings } from "../settings";
+import { createPlayerId, GameSettings, loadSettings, normalizePlayerName, saveSettings } from "../settings";
 
 const MENU_TEXT = {
   en: {
-    subtitleLead: "8 ENTER.",
-    subtitleAccent: "1 LEAVES.",
+    tagline: "8 ENTER. 1 LEAVES.",
+    nameLabel: "PLAYER NAME",
     start: "START MATCH",
-    hostOnline: "HOST ONLINE",
-    joinOnline: "JOIN ROOM",
-    roomCode: "ROOM CODE",
-    noRoom: "--",
-    firebaseMissing: "FIREBASE OFF",
+    multiplayer: "MULTIPLAYER",
     settings: "SETTINGS",
+    hostOnline: "HOST ROOM",
+    joinOnline: "JOIN ROOM",
+    back: "BACK",
     language: "LANGUAGE",
     volume: "VOLUME",
     debug: "DEBUG MODE",
     on: "ON",
     off: "OFF",
-    controlsTitle: "CONTROLS",
-    move: "MOVE",
-    aim: "AIM",
-    throwShoot: "THROW / SHOOT",
-    dash: "DASH",
-    rematch: "REMATCH",
-    debugHint: "Enables the 4P skip button in-match.",
-    version: "v0.1.0  -  DEV BUILD",
-    promptRoom: "Room code"
+    firebaseReady: "ONLINE READY",
+    firebaseMissing: "FIREBASE OFF",
+    promptName: "Player name",
+    promptRoom: "Room code",
+    ok: "OK",
+    cancel: "CANCEL",
+    version: "v0.1.0 DEV BUILD"
   },
   pt: {
-    subtitleLead: "8 ENTRAM.",
-    subtitleAccent: "1 SAI.",
+    tagline: "8 ENTRAM. 1 SAI.",
+    nameLabel: "NOME DO PLAYER",
     start: "INICIAR PARTIDA",
-    hostOnline: "CRIAR ONLINE",
-    joinOnline: "ENTRAR SALA",
-    roomCode: "CODIGO DA SALA",
-    noRoom: "--",
-    firebaseMissing: "FIREBASE OFF",
-    settings: "AJUSTES",
+    multiplayer: "MULTIPLAYER",
+    settings: "CONFIGURACOES",
+    hostOnline: "CRIAR SALA",
+    joinOnline: "ENTRAR NA SALA",
+    back: "VOLTAR",
     language: "IDIOMA",
     volume: "VOLUME",
     debug: "MODO DEBUG",
     on: "ON",
     off: "OFF",
-    controlsTitle: "CONTROLES",
-    move: "MOVER",
-    aim: "MIRAR",
-    throwShoot: "LANCAR / ATIRAR",
-    dash: "DASH",
-    rematch: "REVANCHE",
-    debugHint: "Ativa o botao 4P durante a partida.",
-    version: "v0.1.0  -  DEV BUILD",
-    promptRoom: "Codigo da sala"
+    firebaseReady: "ONLINE PRONTO",
+    firebaseMissing: "FIREBASE OFF",
+    promptName: "Nome do player",
+    promptRoom: "Codigo da sala",
+    ok: "OK",
+    cancel: "CANCELAR",
+    version: "v0.1.0 DEV BUILD"
   }
 } as const;
+
+type MenuView = "main" | "multiplayer" | "settings";
 
 type ButtonColors = {
   fill: number;
   stroke: number;
   hoverFill: number;
+  text: string;
+};
+
+type FakePlayer = {
+  body: Phaser.GameObjects.Arc;
+  aim: Phaser.GameObjects.Rectangle;
+  wake: Phaser.GameObjects.Arc;
+  velocity: Phaser.Math.Vector2;
+};
+
+type ActiveModal = {
+  value: string;
+  maxLength: number;
+  transform: (value: string) => string;
+  submit: (value: string) => void;
 };
 
 export class MenuScene extends Phaser.Scene {
   private settings: GameSettings = loadSettings();
-  private languageValue!: Phaser.GameObjects.Text;
-  private volumeValue!: Phaser.GameObjects.Text;
-  private debugValue!: Phaser.GameObjects.Text;
-  private subtitleLead!: Phaser.GameObjects.Text;
-  private subtitleAccent!: Phaser.GameObjects.Text;
-  private startLabel!: Phaser.GameObjects.Text;
-  private hostLabel!: Phaser.GameObjects.Text;
-  private joinLabel!: Phaser.GameObjects.Text;
-  private roomCodeLabel!: Phaser.GameObjects.Text;
-  private roomValue!: Phaser.GameObjects.Text;
-  private settingsTitle!: Phaser.GameObjects.Text;
-  private controlsTitle!: Phaser.GameObjects.Text;
-  private debugHint!: Phaser.GameObjects.Text;
-  private languageLabel!: Phaser.GameObjects.Text;
-  private volumeLabel!: Phaser.GameObjects.Text;
-  private debugLabel!: Phaser.GameObjects.Text;
-  private moveLabel!: Phaser.GameObjects.Text;
-  private aimLabel!: Phaser.GameObjects.Text;
-  private throwLabel!: Phaser.GameObjects.Text;
-  private dashLabel!: Phaser.GameObjects.Text;
-  private rematchLabel!: Phaser.GameObjects.Text;
-  private versionText!: Phaser.GameObjects.Text;
+  private view: MenuView = "main";
+  private viewObjects: Phaser.GameObjects.GameObject[] = [];
+  private shellObjects: Phaser.GameObjects.GameObject[] = [];
+  private modalObjects: Phaser.GameObjects.GameObject[] = [];
+  private fakePlayers: FakePlayer[] = [];
+  private fakeBomb!: Phaser.GameObjects.Arc;
+  private fakeBombGlow!: Phaser.GameObjects.Arc;
+  private fakeBombVelocity = new Phaser.Math.Vector2(270, -185);
+  private nameValue!: Phaser.GameObjects.Text;
+  private modalValueText?: Phaser.GameObjects.Text;
+  private activeModal?: ActiveModal;
 
   constructor() {
     super("MenuScene");
@@ -93,19 +93,22 @@ export class MenuScene extends Phaser.Scene {
 
   create() {
     this.settings = loadSettings();
+    this.settings.playerName = normalizePlayerName(this.settings.playerName);
     if (this.startFromUrlParams()) {
       return;
     }
 
-    this.drawBackground();
-    this.drawFrame();
-    this.createTitle();
-    this.createActionPanel();
-    this.createArenaPreview();
-    this.createSettingsPanel();
-    this.createControlsPanel();
-    this.createFooter();
-    this.refreshText();
+    this.createGameplayBackdrop();
+    this.createShell();
+    this.showMainMenu();
+    this.input.keyboard?.on("keydown", this.handleModalKey, this);
+    this.events.once("shutdown", () => {
+      this.input.keyboard?.off("keydown", this.handleModalKey, this);
+    });
+  }
+
+  update(_time: number, delta: number) {
+    this.updateGameplayBackdrop(delta / 1000);
   }
 
   private startFromUrlParams() {
@@ -141,448 +144,568 @@ export class MenuScene extends Phaser.Scene {
       this.settings.debugMode = false;
     }
     saveSettings(this.settings);
-    this.scene.start("GameScene", runtimeSettings);
+    this.scene.start("LobbyScene", runtimeSettings);
     return true;
   }
 
-  private drawBackground() {
-    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x05070a, 1);
-
-    const noise = this.add.graphics();
-    for (let index = 0; index < 120; index += 1) {
-      const x = Phaser.Math.Between(30, GAME_WIDTH - 30);
-      const y = Phaser.Math.Between(30, GAME_HEIGHT - 30);
-      const alpha = Phaser.Math.FloatBetween(0.03, 0.11);
-      noise.fillStyle(index % 4 === 0 ? 0xffb000 : 0x253142, alpha);
-      noise.fillRect(x, y, Phaser.Math.Between(2, 5), Phaser.Math.Between(1, 4));
-    }
-
-    const dots = this.add.graphics();
-    for (let row = 0; row < 11; row += 1) {
-      for (let column = 0; column < 9; column += 1) {
-        dots.fillStyle(0xffb000, 0.05 + column * 0.004);
-        dots.fillCircle(56 + column * 20, 54 + row * 18, 6);
-      }
-    }
-  }
-
-  private drawFrame() {
-    const frame = this.add.graphics();
-    frame.lineStyle(3, 0xffbf16, 1);
-    frame.strokePoints([
-      new Phaser.Geom.Point(22, 44),
-      new Phaser.Geom.Point(66, 16),
-      new Phaser.Geom.Point(716, 16),
-      new Phaser.Geom.Point(728, 30),
-      new Phaser.Geom.Point(1224, 30),
-      new Phaser.Geom.Point(1260, 70),
-      new Phaser.Geom.Point(1260, 650),
-      new Phaser.Geom.Point(1222, 690),
-      new Phaser.Geom.Point(672, 690),
-      new Phaser.Geom.Point(658, 704),
-      new Phaser.Geom.Point(44, 704),
-      new Phaser.Geom.Point(22, 684)
-    ], true, true);
-
-    frame.lineStyle(8, 0xffbf16, 0.85);
-    for (let index = 0; index < 5; index += 1) {
-      frame.lineBetween(32 + index * 13, 47 + index * 5, 32 + index * 13, 78 + index * 5);
-      frame.lineBetween(1215 + index * 12, 674 - index * 2, 1240 + index * 12, 674 - index * 2);
-    }
-  }
-
-  private createTitle() {
-    this.add.text(72, 74, "BOMB TAG", {
-      color: "#ffbf16",
-      fontFamily: "Impact, Haettenschweiler, Arial Black, sans-serif",
-      fontSize: "88px",
-      fontStyle: "900",
-      stroke: "#05070a",
-      strokeThickness: 10
-    });
-    this.subtitleLead = this.add.text(146, 180, "", {
-      color: "#f8f8f3",
-      fontFamily: "Arial Black, ui-sans-serif, system-ui",
-      fontSize: "32px",
-      fontStyle: "900 italic",
-      stroke: "#05070a",
-      strokeThickness: 5
-    });
-    this.subtitleAccent = this.add.text(314, 180, "", {
-      color: "#ffbf16",
-      fontFamily: "Arial Black, ui-sans-serif, system-ui",
-      fontSize: "32px",
-      fontStyle: "900 italic",
-      stroke: "#05070a",
-      strokeThickness: 5
-    });
-  }
-
-  private createActionPanel() {
-    const startButton = this.createButton(62, 262, 540, 84, {
-      fill: 0xffbf16,
-      stroke: 0xffe07a,
-      hoverFill: 0xffd24d
-    }, () => this.startGame());
-    startButton.add(this.add.text(-230, 1, ">>", this.buttonTextStyle("#071018", "30px")).setOrigin(0.5));
-    this.startLabel = this.add.text(0, 0, "", this.buttonTextStyle("#071018", "42px")).setOrigin(0.5);
-    startButton.add(this.startLabel);
-    startButton.add(this.add.text(230, 1, ">>", this.buttonTextStyle("#071018", "30px")).setOrigin(0.5));
-
-    const hostButton = this.createButton(66, 382, 260, 62, {
-      fill: 0x0b1219,
-      stroke: 0x00d8ff,
-      hoverFill: 0x102535
-    }, () => this.hostOnline());
-    hostButton.add(this.add.text(-92, -1, "◎", this.iconStyle("#00d8ff", "32px")).setOrigin(0.5));
-    this.hostLabel = this.add.text(30, 0, "", this.buttonTextStyle("#f7f8ff", "22px")).setOrigin(0.5);
-    hostButton.add(this.hostLabel);
-
-    const joinButton = this.createButton(352, 382, 260, 62, {
-      fill: 0x0b1219,
-      stroke: 0x00d8ff,
-      hoverFill: 0x102535
-    }, () => this.joinOnline());
-    joinButton.add(this.add.text(-96, -1, "●●●", this.iconStyle("#00d8ff", "18px")).setOrigin(0.5));
-    this.joinLabel = this.add.text(32, 0, "", this.buttonTextStyle("#f7f8ff", "22px")).setOrigin(0.5);
-    joinButton.add(this.joinLabel);
-
-    this.createCodePanel();
-  }
-
-  private createCodePanel() {
-    this.drawAngledPanel(62, 462, 540, 62, 0x070b11, 0x303843, 0.92, 0.8);
-    this.add.text(92, 484, "●●●", {
-      color: "#6f7886",
-      fontFamily: "Arial Black, sans-serif",
-      fontSize: "16px",
-      fontStyle: "900"
-    });
-    this.roomCodeLabel = this.add.text(124, 482, "", {
-      color: "#8c94a3",
-      fontFamily: "Arial Black, ui-sans-serif, system-ui",
-      fontSize: "20px",
-      fontStyle: "900"
-    });
-    this.roomValue = this.add.text(480, 482, "", {
-      color: "#00d8ff",
-      fontFamily: "Arial Black, ui-sans-serif, system-ui",
-      fontSize: "24px",
-      fontStyle: "900"
-    }).setOrigin(0.5, 0);
-  }
-
-  private createArenaPreview() {
-    this.drawAngledPanel(648, 68, 568, 340, 0x0c121a, 0x202a36, 0.86, 0.58);
+  private createGameplayBackdrop() {
+    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x090b10, 1);
 
     const arena = this.add.graphics();
-    arena.fillStyle(0x0f1720, 0.92);
-    arena.lineStyle(12, 0x1d2732, 1);
-    arena.strokePoints([
-      new Phaser.Geom.Point(720, 94),
-      new Phaser.Geom.Point(1190, 94),
-      new Phaser.Geom.Point(1190, 360),
-      new Phaser.Geom.Point(1100, 390),
-      new Phaser.Geom.Point(710, 390),
-      new Phaser.Geom.Point(660, 340),
-      new Phaser.Geom.Point(660, 138)
-    ], true, true);
-    arena.lineStyle(1, 0x263141, 0.42);
-    for (let x = 710; x < 1180; x += 42) {
-      arena.lineBetween(x, 108, x, 398);
+    arena.fillStyle(0x14100d, 1);
+    arena.fillRoundedRect(82, 74, 1116, 572, 18);
+    arena.lineStyle(18, 0x704523, 0.62);
+    arena.strokeRoundedRect(82, 74, 1116, 572, 18);
+    arena.lineStyle(1, 0xffbf16, 0.055);
+    for (let x = 146; x < 1160; x += 92) {
+      arena.lineBetween(x, 92, x, 626);
     }
-    for (let y = 118; y < 370; y += 42) {
-      arena.lineBetween(680, y, 1184, y);
+    for (let y = 136; y < 612; y += 92) {
+      arena.lineBetween(102, y, 1180, y);
     }
 
-    this.add.circle(940, 276, 64, 0x111820, 0.82);
-    this.add.circle(940, 276, 26, 0x202b38, 0.65);
-    this.add.circle(915, 276, 16, 0x0a0f14, 0.85);
-    this.add.circle(965, 276, 16, 0x0a0f14, 0.85);
+    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x05070a, 0.54);
+    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x05070a, 0.18);
 
-    this.drawCrate(1008, 188);
-    this.drawCrate(860, 370);
-    this.drawCrate(695, 286);
-    this.drawBombTrail();
-    this.drawPreviewPlayer(784, 200, 0xffbf16, 1.2);
-    this.drawPreviewPlayer(1110, 176, 0x2fa8d7, 2.72);
-    this.drawPreviewPlayer(1128, 330, 0xff423a, -2.58);
-    this.drawPreviewPlayer(768, 374, 0x8a4dcc, 0.45);
-    this.drawBombMark(950, 274, 24, 0x101010, 1, true);
-  }
-
-  private createSettingsPanel() {
-    this.settingsTitle = this.add.text(68, 526, "", {
-      color: "#ffbf16",
-      fontFamily: "Arial Black, ui-sans-serif, system-ui",
-      fontSize: "26px",
-      fontStyle: "900"
-    });
-
-    this.drawAngledPanel(62, 556, 540, 108, 0x090d13, 0x39414d, 0.9, 0.82);
-
-    this.add.text(100, 572, "◎", this.iconStyle("#f7f8ff", "24px")).setOrigin(0.5);
-    this.languageLabel = this.add.text(138, 570, "", this.labelStyle());
-    this.languageValue = this.add.text(430, 570, "", this.valueStyle()).setOrigin(0.5, 0);
-    this.createSmallButton(520, 560, 54, 30, 0x00d8ff, () => this.toggleLanguage(), "<>");
-
-    this.add.text(100, 607, "◁", this.iconStyle("#f7f8ff", "24px")).setOrigin(0.5);
-    this.volumeLabel = this.add.text(138, 605, "", this.labelStyle());
-    this.createSmallButton(340, 595, 42, 30, 0x00d8ff, () => this.changeVolume(-0.1), "-");
-    this.volumeValue = this.add.text(430, 605, "", this.valueStyle()).setOrigin(0.5, 0);
-    this.createSmallButton(520, 595, 42, 30, 0x00d8ff, () => this.changeVolume(0.1), "+");
-
-    this.add.text(100, 642, "✣", this.iconStyle("#f7f8ff", "24px")).setOrigin(0.5);
-    this.debugLabel = this.add.text(138, 640, "", this.labelStyle());
-    this.debugValue = this.add.text(430, 640, "", this.valueStyle()).setOrigin(0.5, 0);
-    this.createSmallButton(520, 630, 54, 30, 0xffbf16, () => this.toggleDebug(), "<>");
-
-    this.debugHint = this.add.text(68, 666, "", {
-      color: "#858e9e",
-      fontFamily: "ui-sans-serif, system-ui",
-      fontSize: "13px",
-      fontStyle: "700"
-    });
-  }
-
-  private createControlsPanel() {
-    this.drawAngledPanel(688, 404, 560, 236, 0x090d13, 0xffbf16, 0.88, 0.86);
-    this.controlsTitle = this.add.text(760, 428, "", {
-      color: "#ffbf16",
-      fontFamily: "Arial Black, ui-sans-serif, system-ui",
-      fontSize: "25px",
-      fontStyle: "900"
-    });
-    this.add.text(720, 430, "⌖", this.iconStyle("#ffbf16", "30px")).setOrigin(0.5);
-
-    const rows = [
-      { y: 470, keys: ["W", "A", "S", "D"], assign: (text: Phaser.GameObjects.Text) => this.moveLabel = text },
-      { y: 508, keys: ["◐"], assign: (text: Phaser.GameObjects.Text) => this.aimLabel = text },
-      { y: 546, keys: ["◑"], assign: (text: Phaser.GameObjects.Text) => this.throwLabel = text },
-      { y: 584, keys: ["SHIFT", "SPACE"], assign: (text: Phaser.GameObjects.Text) => this.dashLabel = text },
-      { y: 622, keys: ["R"], assign: (text: Phaser.GameObjects.Text) => this.rematchLabel = text }
+    this.fakePlayers = [
+      this.createFakePlayer(260, 196, 0xffbf16, 130, 84),
+      this.createFakePlayer(1020, 204, 0x27b8f2, -105, 92),
+      this.createFakePlayer(960, 500, 0xff5048, -146, -68),
+      this.createFakePlayer(374, 520, 0x8e58ff, 120, -104)
     ];
 
-    for (const row of rows) {
-      this.drawKeyGroup(720, row.y, row.keys);
-      this.add.circle(864, row.y + 8, 3, 0x2f3a48, 1);
-      const label = this.add.text(908, row.y - 6, "", {
-        color: "#f7f8ff",
-        fontFamily: "Arial Black, ui-sans-serif, system-ui",
-        fontSize: "22px",
-        fontStyle: "900"
-      });
-      row.assign(label);
-    }
+    this.fakeBombGlow = this.add.circle(640, 360, 34, 0xffbf16, 0.16);
+    this.fakeBombGlow.setDepth(1);
+    this.fakeBomb = this.add.circle(640, 360, 17, 0x101010, 0.88);
+    this.fakeBomb.setStrokeStyle(3, 0xffbf16, 0.42);
+    this.fakeBomb.setDepth(2);
+
+    const veil = this.add.graphics();
+    veil.fillStyle(0x05070a, 0.68);
+    veil.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    veil.fillGradientStyle(0x05070a, 0x05070a, 0x05070a, 0x05070a, 0.94, 0.7, 0.36, 0.76);
+    veil.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    veil.setDepth(4);
   }
 
-  private createFooter() {
-    this.versionText = this.add.text(28, 672, "", {
-      color: "#6f7886",
+  private createFakePlayer(x: number, y: number, color: number, velocityX: number, velocityY: number): FakePlayer {
+    const wake = this.add.circle(x - 10, y + 12, 32, color, 0.08);
+    wake.setScale(1.5, 0.8);
+    wake.setDepth(1);
+    const body = this.add.circle(x, y, 23, color, 0.68);
+    body.setStrokeStyle(4, 0xffffff, 0.14);
+    body.setDepth(2);
+    const aim = this.add.rectangle(x + 30, y, 44, 7, color, 0.38);
+    aim.setOrigin(0, 0.5);
+    aim.setDepth(2);
+    return {
+      body,
+      aim,
+      wake,
+      velocity: new Phaser.Math.Vector2(velocityX, velocityY)
+    };
+  }
+
+  private updateGameplayBackdrop(deltaSeconds: number) {
+    const left = 132;
+    const right = GAME_WIDTH - 132;
+    const top = 116;
+    const bottom = GAME_HEIGHT - 116;
+
+    for (const player of this.fakePlayers) {
+      player.body.x += player.velocity.x * deltaSeconds;
+      player.body.y += player.velocity.y * deltaSeconds;
+      if (player.body.x < left || player.body.x > right) {
+        player.velocity.x *= -1;
+      }
+      if (player.body.y < top || player.body.y > bottom) {
+        player.velocity.y *= -1;
+      }
+      player.body.x = Phaser.Math.Clamp(player.body.x, left, right);
+      player.body.y = Phaser.Math.Clamp(player.body.y, top, bottom);
+      const angle = player.velocity.angle();
+      player.aim.setPosition(player.body.x + Math.cos(angle) * 27, player.body.y + Math.sin(angle) * 27);
+      player.aim.setRotation(angle);
+      player.wake.setPosition(player.body.x - Math.cos(angle) * 18, player.body.y - Math.sin(angle) * 18);
+      player.wake.setRotation(angle);
+      player.wake.setAlpha(0.06 + Math.sin(this.time.now * 0.004) * 0.025);
+    }
+
+    this.fakeBomb.x += this.fakeBombVelocity.x * deltaSeconds;
+    this.fakeBomb.y += this.fakeBombVelocity.y * deltaSeconds;
+    if (this.fakeBomb.x < left || this.fakeBomb.x > right) {
+      this.fakeBombVelocity.x *= -1;
+    }
+    if (this.fakeBomb.y < top || this.fakeBomb.y > bottom) {
+      this.fakeBombVelocity.y *= -1;
+    }
+    this.fakeBomb.x = Phaser.Math.Clamp(this.fakeBomb.x, left, right);
+    this.fakeBomb.y = Phaser.Math.Clamp(this.fakeBomb.y, top, bottom);
+    this.fakeBombGlow.setPosition(this.fakeBomb.x, this.fakeBomb.y);
+    this.fakeBombGlow.setAlpha(0.14 + Math.sin(this.time.now * 0.008) * 0.05);
+  }
+
+  private createShell() {
+    for (const object of this.shellObjects) {
+      object.destroy();
+    }
+    this.shellObjects = [];
+
+    const dictionary = MENU_TEXT[this.settings.language];
+    this.addShellText(GAME_WIDTH / 2, 82, "BOMB TAG", {
+      color: "#ffbf16",
+      fontFamily: "Impact, Haettenschweiler, Arial Black, sans-serif",
+      fontSize: "86px",
+      fontStyle: "900",
+      stroke: "#05070a",
+      strokeThickness: 9
+    }).setOrigin(0.5, 0);
+
+    this.addShellText(GAME_WIDTH / 2, 168, dictionary.tagline, {
+      color: "#f7f8ff",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "24px",
+      fontStyle: "900 italic",
+      stroke: "#05070a",
+      strokeThickness: 5
+    }).setOrigin(0.5);
+
+    this.addShellText(28, 680, dictionary.version, {
+      color: "#818a9a",
       fontFamily: "Arial Black, ui-sans-serif, system-ui",
       fontSize: "14px",
       fontStyle: "900"
     });
-    this.drawBombMark(640, 674, 22, 0xffbf16, 1);
   }
 
-  private createButton(x: number, y: number, width: number, height: number, colors: ButtonColors, onClick: () => void) {
-    const background = this.add.graphics();
-    this.drawButtonShape(background, width, height, colors.fill, colors.stroke, 1);
-    const button = this.add.container(x + width / 2, y + height / 2, [background]);
-    button.setSize(width, height);
-    const hitArea = this.add.zone(x + width / 2, y + height / 2, width, height);
+  private showMainMenu() {
+    this.setView("main");
+    const dictionary = MENU_TEXT[this.settings.language];
+    this.createNameField(442, 220);
+    this.createMenuButton(450, 302, 380, 64, dictionary.start, () => this.startGame(), "primary");
+    this.createMenuButton(450, 382, 380, 64, dictionary.multiplayer, () => this.showMultiplayerMenu(), "secondary");
+    this.createMenuButton(450, 462, 380, 64, dictionary.settings, () => this.showSettingsMenu(), "secondary");
+  }
+
+  private showMultiplayerMenu() {
+    this.setView("multiplayer");
+    const dictionary = MENU_TEXT[this.settings.language];
+    this.createNameField(442, 220);
+    this.createMenuButton(450, 314, 380, 64, dictionary.hostOnline, () => this.hostOnline(), "primary");
+    this.createMenuButton(450, 394, 380, 64, dictionary.joinOnline, () => this.joinOnline(), "secondary");
+    this.createMenuButton(500, 488, 280, 52, dictionary.back, () => this.showMainMenu(), "quiet");
+    this.addViewText(GAME_WIDTH / 2, 570, hasFirebaseConfig() ? dictionary.firebaseReady : dictionary.firebaseMissing, {
+      color: hasFirebaseConfig() ? "#00d8ff" : "#ff5d4f",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "16px",
+      fontStyle: "900"
+    }).setOrigin(0.5);
+  }
+
+  private showSettingsMenu() {
+    this.setView("settings");
+    const dictionary = MENU_TEXT[this.settings.language];
+    this.createNameField(442, 220);
+    this.createSettingRow(450, 314, dictionary.language, this.settings.language === "en" ? "EN" : "PT", () => this.toggleLanguage());
+    this.createSettingRow(450, 386, dictionary.volume, `${Math.round(this.settings.volume * 100)}%`, () => this.changeVolume(0.1));
+    this.createSettingRow(450, 458, dictionary.debug, this.settings.debugMode ? dictionary.on : dictionary.off, () => this.toggleDebug());
+    this.createMenuButton(500, 552, 280, 52, dictionary.back, () => this.showMainMenu(), "quiet");
+  }
+
+  private setView(view: MenuView) {
+    this.view = view;
+    for (const object of this.viewObjects) {
+      object.destroy();
+    }
+    this.viewObjects = [];
+  }
+
+  private createNameField(x: number, y: number) {
+    const dictionary = MENU_TEXT[this.settings.language];
+    this.drawPanel(x, y, 396, 58, 0x071018, 0x00d8ff, 0.8);
+    this.addViewText(x + 24, y + 10, dictionary.nameLabel, {
+      color: "#8994a5",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "12px",
+      fontStyle: "900"
+    });
+    this.nameValue = this.addViewText(x + 24, y + 28, this.settings.playerName, {
+      color: "#f7f8ff",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "20px",
+      fontStyle: "900"
+    });
+    const hitArea = this.add.zone(x + 198, y + 29, 396, 58);
+    hitArea.setDepth(14);
     hitArea.setInteractive({ useHandCursor: true });
-    hitArea.on("pointerover", () => this.drawButtonShape(background, width, height, colors.hoverFill, colors.stroke, 1));
-    hitArea.on("pointerout", () => {
-      button.setScale(1);
-      this.drawButtonShape(background, width, height, colors.fill, colors.stroke, 1);
-    });
-    hitArea.on("pointerdown", () => {
-      button.setScale(0.96);
-      onClick();
-    });
-    hitArea.on("pointerup", () => button.setScale(1));
-    hitArea.on("pointerupoutside", () => button.setScale(1));
-    return button;
+    hitArea.on("pointerdown", () => this.editPlayerName());
+    this.viewObjects.push(hitArea);
   }
 
-  private createSmallButton(x: number, y: number, width: number, height: number, stroke: number, onClick: () => void, label: string) {
-    const button = this.createButton(x, y, width, height, {
-      fill: 0x070b11,
-      stroke,
-      hoverFill: 0x13202b
-    }, onClick);
-    button.add(this.add.text(0, -1, label, {
+  private createSettingRow(x: number, y: number, label: string, value: string, onClick: () => void) {
+    this.drawPanel(x, y, 380, 54, 0x071018, 0x263442, 0.76);
+    this.addViewText(x + 24, y + 16, label, {
       color: "#f7f8ff",
       fontFamily: "Arial Black, ui-sans-serif, system-ui",
       fontSize: "18px",
       fontStyle: "900"
-    }).setOrigin(0.5));
+    });
+    this.addViewText(x + 312, y + 16, value, {
+      color: "#ffbf16",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "18px",
+      fontStyle: "900"
+    }).setOrigin(0.5, 0);
+    const hitArea = this.add.zone(x + 190, y + 27, 380, 54);
+    hitArea.setDepth(14);
+    hitArea.setInteractive({ useHandCursor: true });
+    hitArea.on("pointerdown", onClick);
+    this.viewObjects.push(hitArea);
   }
 
-  private drawButtonShape(graphics: Phaser.GameObjects.Graphics, width: number, height: number, fill: number, stroke: number, alpha: number) {
-    const cut = Math.min(22, height * 0.45);
+  private createMenuButton(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    label: string,
+    onClick: () => void,
+    variant: "primary" | "secondary" | "quiet"
+  ) {
+    const colors = this.getButtonColors(variant);
+    const background = this.add.graphics();
+    this.drawButtonShape(background, x, y, width, height, colors.fill, colors.stroke, 0.94);
+    background.setDepth(12);
+    this.viewObjects.push(background);
+
+    const text = this.addViewText(x + width / 2, y + height / 2, label, {
+      color: colors.text,
+      fontFamily: "Impact, Arial Black, ui-sans-serif, system-ui",
+      fontSize: variant === "primary" ? "36px" : "30px",
+      fontStyle: "900 italic",
+      stroke: variant === "primary" ? "#ffbf16" : "#05070a",
+      strokeThickness: variant === "primary" ? 0 : 4
+    }).setOrigin(0.5);
+    text.setDepth(13);
+
+    const hitArea = this.add.zone(x + width / 2, y + height / 2, width, height);
+    hitArea.setDepth(14);
+    hitArea.setInteractive({ useHandCursor: true });
+    hitArea.on("pointerover", () => this.drawButtonShape(background, x, y, width, height, colors.hoverFill, colors.stroke, 1));
+    hitArea.on("pointerout", () => this.drawButtonShape(background, x, y, width, height, colors.fill, colors.stroke, 0.94));
+    hitArea.on("pointerdown", () => {
+      background.setAlpha(0.86);
+      text.setScale(0.96);
+      onClick();
+    });
+    hitArea.on("pointerup", () => {
+      background.setAlpha(1);
+      text.setScale(1);
+    });
+    hitArea.on("pointerupoutside", () => {
+      background.setAlpha(1);
+      text.setScale(1);
+    });
+    this.viewObjects.push(hitArea);
+  }
+
+  private getButtonColors(variant: "primary" | "secondary" | "quiet"): ButtonColors {
+    if (variant === "primary") {
+      return {
+        fill: 0xffbf16,
+        stroke: 0xffe07a,
+        hoverFill: 0xffd24d,
+        text: "#071018"
+      };
+    }
+
+    if (variant === "secondary") {
+      return {
+        fill: 0x071018,
+        stroke: 0x00d8ff,
+        hoverFill: 0x102535,
+        text: "#f7f8ff"
+      };
+    }
+
+    return {
+      fill: 0x090d13,
+      stroke: 0x56606f,
+      hoverFill: 0x141b25,
+      text: "#cbd2df"
+    };
+  }
+
+  private drawPanel(x: number, y: number, width: number, height: number, fill: number, stroke: number, alpha: number) {
+    const panel = this.add.graphics();
+    panel.setDepth(11);
+    const cut = 16;
     const points = [
-      new Phaser.Geom.Point(-width / 2 + cut, -height / 2),
-      new Phaser.Geom.Point(width / 2 - 12, -height / 2),
-      new Phaser.Geom.Point(width / 2, -height / 2 + 12),
-      new Phaser.Geom.Point(width / 2 - cut, height / 2),
-      new Phaser.Geom.Point(-width / 2 + 8, height / 2),
-      new Phaser.Geom.Point(-width / 2, height / 2 - 12),
-      new Phaser.Geom.Point(-width / 2 + cut, -height / 2)
+      new Phaser.Geom.Point(x + cut, y),
+      new Phaser.Geom.Point(x + width - cut, y),
+      new Phaser.Geom.Point(x + width, y + cut),
+      new Phaser.Geom.Point(x + width - cut, y + height),
+      new Phaser.Geom.Point(x + cut, y + height),
+      new Phaser.Geom.Point(x, y + height - cut),
+      new Phaser.Geom.Point(x, y + cut)
+    ];
+    panel.fillStyle(fill, alpha);
+    panel.fillPoints(points, true);
+    panel.lineStyle(2, stroke, 0.72);
+    panel.strokePoints(points, true, true);
+    this.viewObjects.push(panel);
+    return panel;
+  }
+
+  private drawButtonShape(
+    graphics: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    fill: number,
+    stroke: number,
+    alpha: number
+  ) {
+    const cut = Math.min(24, height * 0.44);
+    const points = [
+      new Phaser.Geom.Point(x + cut, y),
+      new Phaser.Geom.Point(x + width - 14, y),
+      new Phaser.Geom.Point(x + width, y + 14),
+      new Phaser.Geom.Point(x + width - cut, y + height),
+      new Phaser.Geom.Point(x + 10, y + height),
+      new Phaser.Geom.Point(x, y + height - 14),
+      new Phaser.Geom.Point(x + cut, y)
     ];
     graphics.clear();
     graphics.fillStyle(fill, alpha);
     graphics.fillPoints(points, true);
     graphics.lineStyle(2, stroke, 0.95);
     graphics.strokePoints(points, true, true);
-    graphics.lineStyle(1, 0xffffff, 0.2);
-    graphics.lineBetween(-width / 2 + cut + 8, -height / 2 + 5, width / 2 - 28, -height / 2 + 5);
   }
 
-  private drawAngledPanel(x: number, y: number, width: number, height: number, fill: number, stroke: number, fillAlpha: number, strokeAlpha: number) {
-    const cut = 22;
-    const graphics = this.add.graphics();
+  private addShellText(x: number, y: number, text: string, style: Phaser.Types.GameObjects.Text.TextStyle) {
+    const object = this.add.text(x, y, text, style);
+    object.setDepth(10);
+    this.shellObjects.push(object);
+    return object;
+  }
+
+  private addViewText(x: number, y: number, text: string, style: Phaser.Types.GameObjects.Text.TextStyle) {
+    const object = this.add.text(x, y, text, style);
+    object.setDepth(13);
+    this.viewObjects.push(object);
+    return object;
+  }
+
+  private editPlayerName() {
+    const dictionary = MENU_TEXT[this.settings.language];
+    this.openTextModal(dictionary.promptName, this.settings.playerName, 14, (value) => value, (value) => {
+      this.settings.playerName = normalizePlayerName(value);
+      saveSettings(this.settings);
+      this.nameValue.setText(this.settings.playerName);
+    });
+  }
+
+  private openTextModal(
+    title: string,
+    initialValue: string,
+    maxLength: number,
+    transform: (value: string) => string,
+    submit: (value: string) => void
+  ) {
+    this.closeModal();
+    const dictionary = MENU_TEXT[this.settings.language];
+    this.activeModal = {
+      value: transform(initialValue).slice(0, maxLength),
+      maxLength,
+      transform,
+      submit
+    };
+
+    const blocker = this.add.zone(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT);
+    blocker.setDepth(30);
+    blocker.setInteractive();
+    this.modalObjects.push(blocker);
+
+    const overlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x020407, 0.72);
+    overlay.setDepth(30);
+    this.modalObjects.push(overlay);
+
+    const panel = this.add.graphics();
+    panel.setDepth(31);
+    this.drawModalPanel(panel, 390, 224, 500, 252);
+    this.modalObjects.push(panel);
+
+    this.addModalText(GAME_WIDTH / 2, 254, title.toUpperCase(), {
+      color: "#ffbf16",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "26px",
+      fontStyle: "900"
+    }).setOrigin(0.5);
+
+    const field = this.add.rectangle(GAME_WIDTH / 2, 336, 390, 58, 0x071018, 0.96);
+    field.setStrokeStyle(2, 0x00d8ff, 0.8);
+    field.setDepth(32);
+    this.modalObjects.push(field);
+
+    this.modalValueText = this.addModalText(452, 319, this.activeModal.value, {
+      color: "#f7f8ff",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "24px",
+      fontStyle: "900"
+    });
+    this.refreshModalValue();
+
+    this.createModalButton(440, 398, 150, 46, dictionary.cancel, () => this.closeModal(), "quiet");
+    this.createModalButton(690, 398, 150, 46, dictionary.ok, () => this.submitModal(), "primary");
+  }
+
+  private handleModalKey(event: KeyboardEvent) {
+    if (!this.activeModal) {
+      return;
+    }
+
+    event.preventDefault();
+    if (event.key === "Enter") {
+      this.submitModal();
+      return;
+    }
+    if (event.key === "Escape") {
+      this.closeModal();
+      return;
+    }
+    if (event.key === "Backspace") {
+      this.activeModal.value = this.activeModal.value.slice(0, -1);
+      this.refreshModalValue();
+      return;
+    }
+    if (event.key.length !== 1 || this.activeModal.value.length >= this.activeModal.maxLength) {
+      return;
+    }
+
+    const nextValue = this.activeModal.transform(this.activeModal.value + event.key);
+    this.activeModal.value = nextValue.slice(0, this.activeModal.maxLength);
+    this.refreshModalValue();
+  }
+
+  private refreshModalValue() {
+    if (!this.activeModal || !this.modalValueText) {
+      return;
+    }
+
+    this.modalValueText.setText(this.activeModal.value || "_");
+    this.modalValueText.setColor(this.activeModal.value ? "#f7f8ff" : "#56606f");
+  }
+
+  private submitModal() {
+    if (!this.activeModal) {
+      return;
+    }
+
+    const value = this.activeModal.value.trim();
+    if (!value) {
+      this.refreshModalValue();
+      return;
+    }
+
+    const submit = this.activeModal.submit;
+    this.closeModal();
+    submit(value);
+  }
+
+  private closeModal() {
+    for (const object of this.modalObjects) {
+      object.destroy();
+    }
+    this.modalObjects = [];
+    this.modalValueText = undefined;
+    this.activeModal = undefined;
+  }
+
+  private drawModalPanel(graphics: Phaser.GameObjects.Graphics, x: number, y: number, width: number, height: number) {
+    const cut = 28;
     const points = [
       new Phaser.Geom.Point(x + cut, y),
-      new Phaser.Geom.Point(x + width - 12, y),
-      new Phaser.Geom.Point(x + width, y + 12),
-      new Phaser.Geom.Point(x + width, y + height - cut),
+      new Phaser.Geom.Point(x + width - 18, y),
+      new Phaser.Geom.Point(x + width, y + 18),
       new Phaser.Geom.Point(x + width - cut, y + height),
-      new Phaser.Geom.Point(x + 12, y + height),
-      new Phaser.Geom.Point(x, y + height - 12),
+      new Phaser.Geom.Point(x + 18, y + height),
+      new Phaser.Geom.Point(x, y + height - 18),
       new Phaser.Geom.Point(x, y + cut)
     ];
-    graphics.fillStyle(fill, fillAlpha);
+    graphics.fillStyle(0x090d13, 0.96);
     graphics.fillPoints(points, true);
-    graphics.lineStyle(2, stroke, strokeAlpha);
+    graphics.lineStyle(3, 0xffbf16, 0.9);
     graphics.strokePoints(points, true, true);
-    graphics.lineStyle(1, 0xffffff, 0.08);
-    graphics.strokePoints(points.map((point) => new Phaser.Geom.Point(point.x + 3, point.y + 3)), true, true);
-    return graphics;
+    graphics.lineStyle(1, 0x00d8ff, 0.35);
+    graphics.strokePoints(points.map((point) => new Phaser.Geom.Point(point.x + 5, point.y + 5)), true, true);
   }
 
-  private drawKeyGroup(x: number, y: number, keys: string[]) {
-    let offset = 0;
-    for (const key of keys) {
-      const width = key.length > 1 ? 58 : 30;
-      const box = this.add.rectangle(x + offset, y + 8, width, 30, 0x090d13, 0.92);
-      box.setStrokeStyle(2, 0xaeb6c4, 0.65);
-      this.add.text(x + offset, y - 4, key, {
-        color: "#f7f8ff",
-        fontFamily: "Arial Black, ui-sans-serif, system-ui",
-        fontSize: key.length > 1 ? "16px" : "20px",
-        fontStyle: "900"
-      }).setOrigin(0.5, 0);
-      offset += width + 6;
-    }
+  private createModalButton(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    label: string,
+    onClick: () => void,
+    variant: "primary" | "quiet"
+  ) {
+    const colors = this.getButtonColors(variant);
+    const background = this.add.graphics();
+    background.setDepth(32);
+    this.drawButtonShape(background, x, y, width, height, colors.fill, colors.stroke, 0.96);
+    this.modalObjects.push(background);
+
+    this.addModalText(x + width / 2, y + height / 2, label, {
+      color: colors.text,
+      fontFamily: "Impact, Arial Black, ui-sans-serif, system-ui",
+      fontSize: "22px",
+      fontStyle: "900 italic"
+    }).setOrigin(0.5);
+
+    const hitArea = this.add.zone(x + width / 2, y + height / 2, width, height);
+    hitArea.setDepth(34);
+    hitArea.setInteractive({ useHandCursor: true });
+    hitArea.on("pointerover", () => this.drawButtonShape(background, x, y, width, height, colors.hoverFill, colors.stroke, 1));
+    hitArea.on("pointerout", () => this.drawButtonShape(background, x, y, width, height, colors.fill, colors.stroke, 0.96));
+    hitArea.on("pointerdown", onClick);
+    this.modalObjects.push(hitArea);
   }
 
-  private drawPreviewPlayer(x: number, y: number, color: number, angle: number) {
-    this.add.ellipse(x - 8, y + 20, 50, 24, 0x000000, 0.42);
-    const body = this.add.circle(x, y, 24, color, 1);
-    body.setStrokeStyle(3, 0x111820, 0.95);
-    this.add.circle(x - 8, y - 9, 5, 0xffffff, 0.78);
-    this.add.circle(x + 12, y - 2, 4, 0x071018, 0.8);
-    const aim = this.add.rectangle(x + Math.cos(angle) * 32, y + Math.sin(angle) * 32, 38, 8, color, 0.9);
-    aim.setRotation(angle);
-  }
-
-  private drawCrate(x: number, y: number) {
-    const crate = this.add.rectangle(x, y, 34, 34, 0x2c3541, 1);
-    crate.setStrokeStyle(1, 0x596472, 0.9);
-    this.add.rectangle(x - 4, y - 4, 34, 34, 0x131a22, 0.25);
-  }
-
-  private drawBombTrail() {
-    const trail = this.add.graphics();
-    const path = [
-      new Phaser.Geom.Point(948, 272),
-      new Phaser.Geom.Point(1002, 260),
-      new Phaser.Geom.Point(1048, 302),
-      new Phaser.Geom.Point(1088, 362),
-      new Phaser.Geom.Point(1150, 320),
-      new Phaser.Geom.Point(1212, 286)
-    ];
-    trail.lineStyle(6, 0xff5e00, 0.25);
-    trail.strokePoints(path, false, false);
-    trail.lineStyle(3, 0xffbf16, 0.9);
-    trail.strokePoints(path, false, false);
-    this.add.circle(1088, 362, 8, 0xffbf16, 1);
-    this.add.circle(1212, 286, 7, 0xffbf16, 1);
-  }
-
-  private drawBombMark(x: number, y: number, radius: number, color: number, alpha: number, skull = false) {
-    this.add.circle(x, y, radius, color, alpha);
-    this.add.rectangle(x + radius * 0.35, y - radius * 0.76, radius * 0.68, radius * 0.36, color, alpha).setRotation(0.45);
-    this.add.line(x + radius * 0.72, y - radius * 1.08, 0, 0, radius * 0.62, -radius * 0.52, color, alpha).setLineWidth(4);
-    if (skull) {
-      this.add.circle(x - 7, y - 3, 11, 0xf7f8ff, 1);
-      this.add.circle(x - 10, y - 5, 3, 0x05070a, 1);
-      this.add.circle(x - 3, y - 5, 3, 0x05070a, 1);
-      this.add.rectangle(x - 7, y + 6, 10, 4, 0xf7f8ff, 1);
-    }
-  }
-
-  private refreshText() {
-    const dictionary = MENU_TEXT[this.settings.language];
-    this.subtitleLead.setText(dictionary.subtitleLead);
-    this.subtitleAccent.setText(dictionary.subtitleAccent);
-    this.startLabel.setText(dictionary.start);
-    this.hostLabel.setText(dictionary.hostOnline);
-    this.joinLabel.setText(dictionary.joinOnline);
-    this.roomCodeLabel.setText(dictionary.roomCode);
-    this.roomValue.setText(this.getRoomLabel());
-    this.settingsTitle.setText(`⚙ ${dictionary.settings}`);
-    this.languageLabel.setText(dictionary.language);
-    this.languageValue.setText(this.settings.language === "en" ? "EN" : "PT");
-    this.volumeLabel.setText(dictionary.volume);
-    this.volumeValue.setText(`${Math.round(this.settings.volume * 100)}%`);
-    this.debugLabel.setText(dictionary.debug);
-    this.debugValue.setText(this.settings.debugMode ? dictionary.on : dictionary.off);
-    this.debugValue.setColor(this.settings.debugMode ? "#ffbf16" : "#f7f8ff");
-    this.controlsTitle.setText(dictionary.controlsTitle);
-    this.moveLabel.setText(dictionary.move);
-    this.aimLabel.setText(dictionary.aim);
-    this.throwLabel.setText(dictionary.throwShoot);
-    this.dashLabel.setText(dictionary.dash);
-    this.rematchLabel.setText(dictionary.rematch);
-    this.debugHint.setText("");
-    this.versionText.setText(dictionary.version);
-  }
-
-  private getRoomLabel() {
-    const dictionary = MENU_TEXT[this.settings.language];
-    if (!hasFirebaseConfig()) {
-      return dictionary.firebaseMissing;
-    }
-
-    if (!this.settings.online.enabled || !this.settings.online.roomCode) {
-      return dictionary.noRoom;
-    }
-
-    return this.settings.online.roomCode;
+  private addModalText(x: number, y: number, text: string, style: Phaser.Types.GameObjects.Text.TextStyle) {
+    const object = this.add.text(x, y, text, style);
+    object.setDepth(33);
+    this.modalObjects.push(object);
+    return object;
   }
 
   private toggleLanguage() {
     this.settings.language = this.settings.language === "en" ? "pt" : "en";
-    this.saveAndRefresh();
+    saveSettings(this.settings);
+    this.createShell();
+    if (this.view === "settings") {
+      this.showSettingsMenu();
+      return;
+    }
+    if (this.view === "multiplayer") {
+      this.showMultiplayerMenu();
+      return;
+    }
+    this.showMainMenu();
   }
 
   private changeVolume(amount: number) {
-    this.settings.volume = Math.round(Math.min(1, Math.max(0, this.settings.volume + amount)) * 10) / 10;
-    this.saveAndRefresh();
+    const nextVolume = this.settings.volume >= 1 ? 0 : this.settings.volume + amount;
+    this.settings.volume = Math.round(Math.min(1, Math.max(0, nextVolume)) * 10) / 10;
+    saveSettings(this.settings);
+    this.showSettingsMenu();
   }
 
   private toggleDebug() {
     this.settings.debugMode = !this.settings.debugMode;
-    this.saveAndRefresh();
-  }
-
-  private saveAndRefresh() {
     saveSettings(this.settings);
-    this.refreshText();
+    this.showSettingsMenu();
   }
 
   private startGame() {
@@ -604,59 +727,22 @@ export class MenuScene extends Phaser.Scene {
 
   private joinOnline() {
     const dictionary = MENU_TEXT[this.settings.language];
-    const code = window.prompt(dictionary.promptRoom)?.trim().toUpperCase();
-    if (!code) {
-      return;
-    }
-
-    this.settings.online = {
-      enabled: true,
-      role: "guest",
-      roomCode: code,
-      playerId: this.settings.online.playerId || createPlayerId()
-    };
-    saveSettings(this.settings);
-    this.scene.start("LobbyScene", this.settings);
+    this.openTextModal(dictionary.promptRoom, "", 5, (value) => (
+      value.toUpperCase().replace(/[^A-Z0-9]/g, "")
+    ), (code) => {
+      this.settings.online = {
+        enabled: true,
+        role: "guest",
+        roomCode: code,
+        playerId: this.settings.online.playerId || createPlayerId()
+      };
+      saveSettings(this.settings);
+      this.scene.start("LobbyScene", this.settings);
+    });
   }
 
   private createRoomCode() {
     const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     return Array.from({ length: 5 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
-  }
-
-  private labelStyle(): Phaser.Types.GameObjects.Text.TextStyle {
-    return {
-      color: "#f7f8ff",
-      fontFamily: "Arial Black, ui-sans-serif, system-ui",
-      fontSize: "17px",
-      fontStyle: "900"
-    };
-  }
-
-  private valueStyle(): Phaser.Types.GameObjects.Text.TextStyle {
-    return {
-      color: "#ffbf16",
-      fontFamily: "Arial Black, ui-sans-serif, system-ui",
-      fontSize: "19px",
-      fontStyle: "900"
-    };
-  }
-
-  private buttonTextStyle(color: string, size: string): Phaser.Types.GameObjects.Text.TextStyle {
-    return {
-      color,
-      fontFamily: "Impact, Arial Black, ui-sans-serif, system-ui",
-      fontSize: size,
-      fontStyle: "900 italic"
-    };
-  }
-
-  private iconStyle(color: string, size: string): Phaser.Types.GameObjects.Text.TextStyle {
-    return {
-      color,
-      fontFamily: "Arial Black, ui-sans-serif, system-ui",
-      fontSize: size,
-      fontStyle: "900"
-    };
   }
 }

@@ -193,7 +193,7 @@ export class LobbyScene extends Phaser.Scene {
     this.client = new LobbyRoomClient({
       roomCode: this.settings.online.roomCode,
       playerId: this.settings.online.playerId,
-      playerName: dictionary.youBadge,
+      playerName: this.settings.playerName,
       playerColor: this.settings.online.role === "host" ? 0x3dc8ff : 0xff5d4f,
       isHost: this.settings.online.role === "host",
       onError: () => this.statusLabel.setText(dictionary.missingFirebase)
@@ -239,7 +239,7 @@ export class LobbyScene extends Phaser.Scene {
       const isLocal = player.id === this.settings.online.playerId;
       const isHost = player.id === this.currentHostId;
       row.add(this.add.circle(0, 9, 8, player.color || 0x00d8ff, 1));
-      row.add(this.add.text(26, -5, isLocal ? dictionary.youBadge : player.name, this.labelStyle("#f7f8ff", "18px")));
+      row.add(this.add.text(26, -5, isLocal ? this.settings.playerName : player.name, this.labelStyle("#f7f8ff", "18px")));
       row.add(this.add.text(248, -3, isHost ? dictionary.hostBadge : "", this.labelStyle("#ffbf16", "14px")));
       this.playerRows.push(row);
     });

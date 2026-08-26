@@ -380,7 +380,7 @@ export class GameScene extends Phaser.Scene {
     const humanId = this.settings.online.enabled && this.settings.online.playerId
       ? this.settings.online.playerId
       : "p1";
-    this.human = new Player(this, humanId, "human", TEXT[this.language].humanName, 270, 360, PLAYER_COLORS[0]);
+    this.human = new Player(this, humanId, "human", this.settings.playerName, 270, 360, PLAYER_COLORS[0]);
     this.players.push(this.human);
 
     const botPositions = [
@@ -625,7 +625,7 @@ export class GameScene extends Phaser.Scene {
     const client = new OnlineRoomClient({
       roomCode: online.roomCode,
       playerId: online.playerId,
-      playerName: this.getPlayerName(this.human),
+      playerName: this.settings.playerName,
       playerColor: this.human.color,
       isHost: online.role === "host",
       onError: () => {
@@ -2596,7 +2596,7 @@ export class GameScene extends Phaser.Scene {
     this.language = this.language === "en" ? "pt" : "en";
     this.settings.language = this.language;
     saveSettings(this.settings);
-    this.human.label.setText(TEXT[this.language].humanName);
+    this.human.label.setText(this.settings.playerName);
     this.lastOwnerText = "";
     this.lastPlayersText = "";
     this.lastStageText = "";
@@ -2656,7 +2656,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private getPlayerName(player: Player) {
-    return player === this.human ? TEXT[this.language].humanName : player.name;
+    return player === this.human ? this.settings.playerName : player.name;
   }
 
   private updateDashHud() {
