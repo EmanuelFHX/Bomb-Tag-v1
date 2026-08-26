@@ -23,6 +23,8 @@ export class Player {
 
   velocity = new Phaser.Math.Vector2();
   aimDirection = new Phaser.Math.Vector2(1, 0);
+  dashVisualDirection = new Phaser.Math.Vector2(1, 0);
+  dashVisualSequence = 0;
   alive = true;
   lives: number = PLAYER.maxLives;
   hasWeapon: boolean = false;
@@ -263,6 +265,17 @@ export class Player {
     this.dashUntil = now + PLAYER.dashDurationMs;
     this.invulnerableUntil = now + PLAYER.dashInvulnerabilityMs;
     this.velocity.copy(direction.normalize().scale(PLAYER.dashSpeed));
+    this.playDashVisual(direction);
+    return true;
+  }
+
+  playDashVisual(direction: Phaser.Math.Vector2) {
+    if (direction.lengthSq() === 0) {
+      return;
+    }
+
+    this.dashVisualSequence += 1;
+    this.dashVisualDirection.copy(direction).normalize();
     this.dashWake.setRotation(direction.angle());
     this.dashWake.setFillStyle(this.color, 0.5);
     this.dashWake.setVisible(true);
@@ -287,8 +300,6 @@ export class Player {
         this.dashWake.setScale(1);
       }
     });
-
-    return true;
   }
 
   updateHuman(

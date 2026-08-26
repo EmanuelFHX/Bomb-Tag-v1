@@ -220,8 +220,18 @@ export class LobbyScene extends Phaser.Scene {
       return;
     }
 
-    const players = Object.values(room.players ?? {}).filter(Boolean);
     this.currentHostId = room.hostId;
+    const players = Object.values(room.players ?? {})
+      .filter(Boolean)
+      .sort((left, right) => {
+        if (left.id === this.currentHostId) {
+          return -1;
+        }
+        if (right.id === this.currentHostId) {
+          return 1;
+        }
+        return left.name.localeCompare(right.name);
+      });
     this.statusLabel.setText(`${dictionary.waiting} ${players.length}/8`);
     this.renderPlayers(players);
   }
