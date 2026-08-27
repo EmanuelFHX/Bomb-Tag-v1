@@ -23,8 +23,8 @@ const JUDGMENT_ORB = {
   required: 3,
   radius: 12,
   detectRadius: 44,
-  spawnEveryMs: 2800,
-  firstSpawnDelayMs: 1200,
+  spawnEveryMs: 4000,
+  firstSpawnDelayMs: 3000,
   maxActive: 1
 } as const;
 
@@ -248,6 +248,8 @@ export class GameScene extends Phaser.Scene {
   private judgmentOrbCounts = new Map<string, number>();
   private judgmentOrbPips = new Map<string, Phaser.GameObjects.Arc[]>();
   private onlineJudgmentOrbVisuals = new Map<string, JudgmentOrb>();
+  private pendingJudgmentDefender?: Player;
+  private pendingJudgmentChallenger?: Player;
   private baseBombSpeedMultiplier = 1;
   private specialBombSpeedBonus = 0;
   private specialRoundLivesRestored = false;
@@ -2023,6 +2025,15 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (event.type === "judgmentOrbComplete") {
+      this.playJudgmentBellSound();
+      const collector = this.players.find((player) => player.id === event.collectorId);
+      if (collector) {
+        this.playJudgmentOrbCollectEffect(collector);
+      }
+      return;
+    }
+
     this.currentRoundMessageKey = event.key;
     this.showRoundMessage(event.message, event.color, event.duration);
   }
@@ -2233,9 +2244,17 @@ export class GameScene extends Phaser.Scene {
     this.syncOnlineMatchState(true);
 
     if (count >= JUDGMENT_ORB.required) {
+      const defender = this.getJudgmentDefenderFromOrbRace(player);
       this.clearJudgmentOrbs();
+      this.pendingJudgmentDefender = defender;
+      this.pendingJudgmentChallenger = player;
       this.judgmentLastAttacker = player;
-      this.playJudgmentTransition(this.getJudgmentDefenderFromOrbRace(player), true, player);
+      this.playJudgmentBellSound();
+      this.queueOnlineEvent({
+        type: "judgmentOrbComplete",
+        collectorId: player.id,
+        defenderId: defender.id
+      });
     }
   }
 
@@ -2826,16 +2845,35 @@ export class GameScene extends Phaser.Scene {
   }
 
   private isJudgmentOrbPhase() {
+    return this.isJudgmentOrbDisplayPhase() &&
+      !this.roundResolving &&
+      !this.hasCompletedJudgmentOrbRace();
+  }
+
+  private isJudgmentOrbDisplayPhase() {
     return this.specialRoundLivesRestored &&
       !this.judgmentPhase &&
       this.getAlivePlayers().length === 2 &&
-      !this.roundResolving &&
       !this.matchOver;
+  }
+
+  private hasCompletedJudgmentOrbRace() {
+    return !!this.pendingJudgmentDefender ||
+      Array.from(this.judgmentOrbCounts.values()).some((count) => count >= JUDGMENT_ORB.required);
   }
 
   private resolveCountdown() {
     const remainingMs = this.roundEndsAt - this.time.now;
     if (remainingMs > 0 || this.roundResolving) {
+      return;
+    }
+
+    if (this.pendingJudgmentDefender) {
+      this.roundResolving = true;
+      this.clearWeaponsAndShots();
+      this.clearHomingIndicator();
+      this.bomb.setVisible(false);
+      this.playJudgmentTransition(this.pendingJudgmentDefender, true, this.pendingJudgmentChallenger);
       return;
     }
 
@@ -2968,6 +3006,8 @@ export class GameScene extends Phaser.Scene {
     this.specialBombSpeedBonus = 0;
     if (alivePlayers.length === 2 && !this.judgmentPhase) {
       this.judgmentOrbCounts.clear();
+      this.pendingJudgmentDefender = undefined;
+      this.pendingJudgmentChallenger = undefined;
       this.nextJudgmentOrbSpawnAt = this.time.now + JUDGMENT_ORB.firstSpawnDelayMs;
     }
     this.createArena(alivePlayers.length);
@@ -3241,6 +3281,8 @@ export class GameScene extends Phaser.Scene {
     this.clearWeaponsAndShots();
     this.clearJudgmentOrbs();
     this.judgmentOrbCounts.clear();
+    this.pendingJudgmentDefender = undefined;
+    this.pendingJudgmentChallenger = undefined;
     this.parryReadyAt.clear();
     this.parryActiveUntil.clear();
     this.botParryThinkAt.clear();
@@ -3315,6 +3357,8 @@ export class GameScene extends Phaser.Scene {
     this.currentRoundMessageKey = "matchOver";
     this.bomb.setVisible(false);
     this.clearJudgmentOrbs();
+    this.pendingJudgmentDefender = undefined;
+    this.pendingJudgmentChallenger = undefined;
     this.showRoundMessage(TEXT[this.language].wins(this.getPlayerName(winner)), "#ffcf33", 999999);
   }
 
@@ -3805,7 +3849,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateJudgmentOrbPips() {
-    const isVisible = this.isJudgmentOrbPhase();
+    const isVisible = this.isJudgmentOrbDisplayPhase();
     for (const player of this.players) {
       const pips = this.judgmentOrbPips.get(player.id);
       if (!pips) {
