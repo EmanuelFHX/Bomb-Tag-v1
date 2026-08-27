@@ -6,6 +6,8 @@ export class InputSystem {
   readonly keys: Record<InputKey, Phaser.Input.Keyboard.Key>;
   private wasDashDown = false;
   private wasRestartDown = false;
+  private virtualMoveDirection = new Phaser.Math.Vector2(0, 0);
+  private virtualDashQueued = false;
 
   constructor(scene: Phaser.Scene) {
     if (!scene.input.keyboard) {
@@ -24,7 +26,7 @@ export class InputSystem {
   }
 
   getMoveDirection() {
-    const direction = new Phaser.Math.Vector2(0, 0);
+    const direction = this.virtualMoveDirection.clone();
 
     if (this.keys.w.isDown) direction.y -= 1;
     if (this.keys.s.isDown) direction.y += 1;
@@ -40,8 +42,9 @@ export class InputSystem {
 
   consumeDashPressed() {
     const isDown = this.keys.shift.isDown || this.keys.space.isDown;
-    const pressed = isDown && !this.wasDashDown;
+    const pressed = (isDown && !this.wasDashDown) || this.virtualDashQueued;
     this.wasDashDown = isDown;
+    this.virtualDashQueued = false;
     return pressed;
   }
 
@@ -50,5 +53,13 @@ export class InputSystem {
     const pressed = isDown && !this.wasRestartDown;
     this.wasRestartDown = isDown;
     return pressed;
+  }
+
+  setVirtualMoveDirection(direction: Phaser.Math.Vector2) {
+    this.virtualMoveDirection.copy(direction);
+  }
+
+  queueVirtualDash() {
+    this.virtualDashQueued = true;
   }
 }

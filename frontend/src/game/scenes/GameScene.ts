@@ -107,6 +107,23 @@ type OnlinePickupVisual = {
   ring: Phaser.GameObjects.Arc;
 };
 
+type MobileControls = {
+  container: Phaser.GameObjects.Container;
+  joystickBase: Phaser.GameObjects.Arc;
+  joystickKnob: Phaser.GameObjects.Arc;
+  joystickZone: Phaser.GameObjects.Zone;
+  actionButton: Phaser.GameObjects.Arc;
+  actionLabel: Phaser.GameObjects.Text;
+  actionZone: Phaser.GameObjects.Zone;
+  dashButton: Phaser.GameObjects.Arc;
+  dashLabel: Phaser.GameObjects.Text;
+  dashZone: Phaser.GameObjects.Zone;
+  parryButton: Phaser.GameObjects.Arc;
+  parryLabel: Phaser.GameObjects.Text;
+  parryZone: Phaser.GameObjects.Zone;
+  joystickPointerId?: number;
+};
+
 type DebugWindow = Window & {
   __bombTagDebug?: unknown;
 };
@@ -286,6 +303,9 @@ export class GameScene extends Phaser.Scene {
   private onlineKnownLives = new Map<string, number>();
   private lastLifeFeedbackAt = new Map<string, number>();
   private nextDebugSnapshotAt = 0;
+  private mobileControls?: MobileControls;
+  private mobileControlsEnabled = false;
+  private mobileAimDirection = new Phaser.Math.Vector2(1, 0);
   private judgmentPhase = false;
   private judgmentDuelPhase = false;
   private judgmentDefender?: Player;
@@ -319,6 +339,7 @@ export class GameScene extends Phaser.Scene {
     this.createJudgmentOrbPips();
     this.bomb = new Bomb(this, this.human);
     this.createHud();
+    this.createMobileControls();
     this.startRound(BOT.count + 1);
     this.time.delayedCall(250, () => this.connectOnlineRoom());
 
@@ -326,6 +347,12 @@ export class GameScene extends Phaser.Scene {
       this.audio.unlock();
       this.startMatchMusic();
       this.primeFinalBattleMusic();
+      if (this.mobileControlsEnabled) {
+        if (!this.isPointerOverMobileControl(pointer)) {
+          this.updateMobileAimFromPointer(pointer);
+        }
+        return;
+      }
       if (pointer.rightButtonDown() && !this.roundResolving && !this.matchOver) {
         this.handleHumanParry();
         return;
@@ -333,6 +360,12 @@ export class GameScene extends Phaser.Scene {
       if (pointer.leftButtonDown() && !this.roundResolving && !this.matchOver) {
         this.handleHumanAction();
       }
+    });
+    this.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
+      this.updateMobilePointer(pointer);
+    });
+    this.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+      this.releaseMobilePointer(pointer);
     });
     this.input.keyboard?.on("keydown", () => {
       this.audio.unlock();
@@ -350,6 +383,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number) {
+    this.updateMobileControlsVisual();
     if (this.isOnlineGuest()) {
       this.updateOnlineGuestInput(delta / 1000);
       this.syncOnlinePlayer();
@@ -373,9 +407,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     const deltaSeconds = delta / 1000;
-    const pointer = this.input.activePointer;
-    const pointerWorld = new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
     const moveDirection = this.inputSystem.getMoveDirection();
+    const pointerWorld = this.getHumanAimTarget(moveDirection);
     let forceOnlineMatchSync = false;
 
     this.human.updateHuman(
@@ -600,6 +633,221 @@ export class GameScene extends Phaser.Scene {
     }
     this.createScoreboard();
     this.updateHud(true);
+  }
+
+  private createMobileControls() {
+    this.mobileControlsEnabled = this.shouldUseMobileControls();
+    const container = this.add.container(0, 0);
+    container.setDepth(24);
+    container.setVisible(this.mobileControlsEnabled);
+
+    const joystickBase = this.add.circle(126, 586, 64, 0x101722, 0.42);
+    joystickBase.setStrokeStyle(4, 0x86f7ff, 0.42);
+    const joystickKnob = this.add.circle(126, 586, 25, 0x86f7ff, 0.55);
+    joystickKnob.setStrokeStyle(3, 0xffffff, 0.45);
+    const joystickZone = this.add.zone(126, 586, 156, 156);
+    joystickZone.setInteractive();
+
+    const actionButton = this.add.circle(1130, 575, 58, 0xffcf33, 0.58);
+    actionButton.setStrokeStyle(5, 0xffffff, 0.32);
+    const actionLabel = this.add.text(1130, 575, this.language === "pt" ? "ACAO" : "ACTION", {
+      color: "#0c0f16",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "18px",
+      fontStyle: "900"
+    }).setOrigin(0.5);
+    const actionZone = this.add.zone(1130, 575, 146, 146);
+    actionZone.setInteractive();
+
+    const dashButton = this.add.circle(1018, 620, 42, 0x86f7ff, 0.42);
+    dashButton.setStrokeStyle(4, 0xffffff, 0.26);
+    const dashLabel = this.add.text(1018, 620, "DASH", {
+      color: "#f7f8ff",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "14px",
+      fontStyle: "900"
+    }).setOrigin(0.5);
+    const dashZone = this.add.zone(1018, 620, 112, 112);
+    dashZone.setInteractive();
+
+    const parryButton = this.add.circle(1210, 460, 43, 0xff5d4f, 0.42);
+    parryButton.setStrokeStyle(4, 0xffffff, 0.26);
+    const parryLabel = this.add.text(1210, 460, "PARRY", {
+      color: "#f7f8ff",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "13px",
+      fontStyle: "900"
+    }).setOrigin(0.5);
+    const parryZone = this.add.zone(1210, 460, 114, 114);
+    parryZone.setInteractive();
+
+    container.add([
+      joystickBase,
+      joystickKnob,
+      actionButton,
+      actionLabel,
+      dashButton,
+      dashLabel,
+      parryButton,
+      parryLabel,
+      joystickZone,
+      actionZone,
+      dashZone,
+      parryZone
+    ]);
+
+    joystickZone.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      this.mobileControls!.joystickPointerId = pointer.id;
+      this.updateMobileJoystick(pointer);
+    });
+    actionZone.on("pointerdown", () => {
+      this.unlockAudioFromTouch();
+      if (this.matchOver) {
+        this.scene.restart();
+        return;
+      }
+      if (!this.roundResolving) {
+        this.handleHumanAction();
+      }
+    });
+    dashZone.on("pointerdown", () => {
+      this.unlockAudioFromTouch();
+      if (!this.roundResolving && !this.matchOver) {
+        this.inputSystem.queueVirtualDash();
+      }
+    });
+    parryZone.on("pointerdown", () => {
+      this.unlockAudioFromTouch();
+      if (!this.roundResolving && !this.matchOver) {
+        this.handleHumanParry();
+      }
+    });
+
+    this.mobileControls = {
+      container,
+      joystickBase,
+      joystickKnob,
+      joystickZone,
+      actionButton,
+      actionLabel,
+      actionZone,
+      dashButton,
+      dashLabel,
+      dashZone,
+      parryButton,
+      parryLabel,
+      parryZone
+    };
+  }
+
+  private shouldUseMobileControls() {
+    const coarsePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+    const compactViewport = typeof window !== "undefined" && (window.innerWidth <= 900 || window.innerHeight <= 560);
+    return !!this.sys.game.device.input.touch || coarsePointer || compactViewport;
+  }
+
+  private unlockAudioFromTouch() {
+    this.audio.unlock();
+    this.startMatchMusic();
+    this.primeFinalBattleMusic();
+  }
+
+  private updateMobileControlsVisual() {
+    if (!this.mobileControls) {
+      return;
+    }
+
+    this.mobileControlsEnabled = this.shouldUseMobileControls();
+    const isVisible = this.mobileControlsEnabled && (!this.roundResolving || this.matchOver);
+    this.mobileControls.container.setVisible(isVisible);
+    this.mobileControls.actionLabel.setText(this.matchOver
+      ? (this.language === "pt" ? "NOVO" : "RETRY")
+      : (this.language === "pt" ? "ACAO" : "ACTION"));
+    this.mobileControls.actionButton.setAlpha(this.matchOver ? 0.72 : 0.58);
+    this.mobileControls.dashButton.setAlpha(this.human.dashChargeCount > 0 ? 0.46 : 0.22);
+    this.mobileControls.parryButton.setAlpha(this.isFinalPhase() ? 0.46 : 0.28);
+  }
+
+  private updateMobilePointer(pointer: Phaser.Input.Pointer) {
+    if (!this.mobileControlsEnabled || !this.mobileControls) {
+      return;
+    }
+
+    if (this.mobileControls.joystickPointerId === pointer.id) {
+      this.updateMobileJoystick(pointer);
+      return;
+    }
+
+    if (pointer.isDown && !this.isPointerOverMobileControl(pointer)) {
+      this.updateMobileAimFromPointer(pointer);
+    }
+  }
+
+  private updateMobileJoystick(pointer: Phaser.Input.Pointer) {
+    if (!this.mobileControls) {
+      return;
+    }
+
+    const base = this.mobileControls.joystickBase;
+    const delta = new Phaser.Math.Vector2(pointer.worldX - base.x, pointer.worldY - base.y);
+    const distance = Math.min(delta.length(), 54);
+    const direction = delta.lengthSq() > 0 ? delta.normalize() : new Phaser.Math.Vector2(0, 0);
+    this.mobileControls.joystickKnob.setPosition(base.x + direction.x * distance, base.y + direction.y * distance);
+    this.inputSystem.setVirtualMoveDirection(direction);
+    if (direction.lengthSq() > 0.08) {
+      this.mobileAimDirection.copy(direction);
+    }
+  }
+
+  private releaseMobilePointer(pointer: Phaser.Input.Pointer) {
+    if (!this.mobileControls || this.mobileControls.joystickPointerId !== pointer.id) {
+      return;
+    }
+
+    this.mobileControls.joystickPointerId = undefined;
+    this.mobileControls.joystickKnob.setPosition(this.mobileControls.joystickBase.x, this.mobileControls.joystickBase.y);
+    this.inputSystem.setVirtualMoveDirection(new Phaser.Math.Vector2(0, 0));
+  }
+
+  private isPointerOverMobileControl(pointer: Phaser.Input.Pointer) {
+    if (!this.mobileControls || !this.mobileControlsEnabled) {
+      return false;
+    }
+
+    const targets = [
+      { x: this.mobileControls.joystickBase.x, y: this.mobileControls.joystickBase.y, radius: 86 },
+      { x: this.mobileControls.actionButton.x, y: this.mobileControls.actionButton.y, radius: 76 },
+      { x: this.mobileControls.dashButton.x, y: this.mobileControls.dashButton.y, radius: 60 },
+      { x: this.mobileControls.parryButton.x, y: this.mobileControls.parryButton.y, radius: 62 }
+    ];
+
+    return targets.some((target) => (
+      Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, target.x, target.y) <= target.radius
+    ));
+  }
+
+  private updateMobileAimFromPointer(pointer: Phaser.Input.Pointer) {
+    const direction = new Phaser.Math.Vector2(pointer.worldX - this.human.x, pointer.worldY - this.human.y);
+    if (direction.lengthSq() > 0) {
+      this.mobileAimDirection.copy(direction.normalize());
+    }
+  }
+
+  private getHumanAimTarget(moveDirection: Phaser.Math.Vector2) {
+    if (this.mobileControlsEnabled) {
+      const direction = this.mobileAimDirection.lengthSq() > 0
+        ? this.mobileAimDirection
+        : moveDirection;
+      if (direction.lengthSq() > 0) {
+        return new Phaser.Math.Vector2(
+          this.human.x + direction.x * 180,
+          this.human.y + direction.y * 180
+        );
+      }
+    }
+
+    const pointer = this.input.activePointer;
+    return new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
   }
 
   private handleHumanAction() {
@@ -1031,9 +1279,8 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    const pointer = this.input.activePointer;
-    const pointerWorld = new Phaser.Math.Vector2(pointer.worldX, pointer.worldY);
     const moveDirection = this.inputSystem.getMoveDirection();
+    const pointerWorld = this.getHumanAimTarget(moveDirection);
     const dashPressed = this.inputSystem.consumeDashPressed();
     if (dashPressed) {
       const dashDirection = moveDirection.lengthSq() > 0 ? moveDirection.clone() : this.human.aimDirection.clone();
