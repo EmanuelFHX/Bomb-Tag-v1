@@ -146,6 +146,14 @@ export class AudioSystem {
     this.beep({ frequency: 160, duration: 0.12, gain: 0.1, type: "triangle", delay: 0.06 });
   }
 
+  playJudgmentBell() {
+    this.unlock();
+    this.beep({ frequency: 98, duration: 1.65, gain: 0.2, type: "sine" });
+    this.beep({ frequency: 147, duration: 1.35, gain: 0.12, type: "triangle", delay: 0.02 });
+    this.beep({ frequency: 294, duration: 0.95, gain: 0.075, type: "sine", delay: 0.035 });
+    this.beep({ frequency: 54, duration: 1.9, gain: 0.08, type: "sine", delay: 0.04 });
+  }
+
   private playDirectHit(byHuman: boolean) {
     const gain = byHuman ? 0.18 : 0.12;
     this.beep({ frequency: 660, duration: 0.075, gain, type: "triangle" });

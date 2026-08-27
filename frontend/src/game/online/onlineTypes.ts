@@ -91,7 +91,7 @@ export type OnlineMatchRoundState = {
   winnerId: string | null;
 };
 
-export type OnlineMusicState = "none" | "match" | "final";
+export type OnlineMusicState = "none" | "match" | "final" | "judgment";
 
 export type OnlineCombatEventDraft =
   | {
@@ -143,7 +143,7 @@ export type OnlineCombatEventDraft =
       message: string;
       color: string;
       duration: number;
-      key: "playersRemain" | "threePlayers" | "livesRestored" | "finalDuel" | "matchOver" | "";
+      key: "playersRemain" | "threePlayers" | "livesRestored" | "finalDuel" | "judgmentDefense" | "matchOver" | "";
     };
 
 export type OnlineCombatEvent = OnlineCombatEventDraft & {

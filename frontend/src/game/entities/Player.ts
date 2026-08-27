@@ -219,6 +219,19 @@ export class Player {
     this.setLives(PLAYER.maxLives);
   }
 
+  reviveAt(x: number, y: number) {
+    this.alive = true;
+    this.velocity.set(0, 0);
+    this.container.setPosition(x, y);
+    this.container.setAlpha(1);
+    this.container.setScale(1);
+    this.container.setVisible(true);
+    this.clearWeapon();
+    this.restoreLives();
+    this.setBombHolder(false);
+    this.updateVisualState();
+  }
+
   takeShotDamage(ignoreInvulnerability = false) {
     if (!this.alive || (!ignoreInvulnerability && this.isInvulnerable)) {
       return false;
