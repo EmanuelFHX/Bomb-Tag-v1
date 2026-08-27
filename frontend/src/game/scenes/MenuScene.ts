@@ -35,7 +35,7 @@ const MENU_TEXT = {
     promptRoom: "Room code",
     ok: "OK",
     cancel: "CANCEL",
-    version: "v0.1.0 DEV BUILD"
+    version: "v0.3.4 BUILD"
   },
   pt: {
     tagline: "8 ENTRAM. 1 SAI.",
