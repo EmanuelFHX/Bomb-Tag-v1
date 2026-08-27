@@ -13,7 +13,7 @@ const MENU_TEXT = {
     howToPlay: "HOW TO PLAY",
     howToPlayTitle: "HOW TO PLAY",
     howToPlayLines: [
-      "Bomb Tag is an arena survival game: 8 players enter and only 1 leaves.",
+      "Ultimante Bomb Tag is an arena survival game: 8 players enter and only 1 leaves.",
       "Hold the bomb, aim with the mouse, and throw it before the timer ends.",
       "The bomb can ricochet, return to the thrower, and become homing in the final round.",
       "Weapons spawn during the match. Pick one up and shoot to remove enemy lives.",
@@ -46,7 +46,7 @@ const MENU_TEXT = {
     howToPlay: "COMO JOGAR",
     howToPlayTitle: "COMO JOGAR",
     howToPlayLines: [
-      "Bomb Tag é um jogo de sobrevivência em arena: 8 jogadores entram e apenas 1 sai.",
+      "Ultimante Bomb Tag é um jogo de sobrevivência em arena: 8 jogadores entram e apenas 1 sai.",
       "Segure a bomba, mire com o mouse e lance antes do timer acabar.",
       "A bomba pode ricochetear, voltar para quem lançou e ficar teleguiada na rodada final.",
       "Armas aparecem durante a partida. Pegue uma e atire para tirar vidas dos inimigos.",
@@ -111,6 +111,10 @@ export class MenuScene extends Phaser.Scene {
 
   constructor() {
     super("MenuScene");
+  }
+
+  preload() {
+    this.load.image("ubt-logo", "/images/ubt-logo.png");
   }
 
   create() {
@@ -274,14 +278,11 @@ export class MenuScene extends Phaser.Scene {
     this.shellObjects = [];
 
     const dictionary = MENU_TEXT[this.settings.language];
-    this.addShellText(GAME_WIDTH / 2, 82, "BOMB TAG", {
-      color: "#ffbf16",
-      fontFamily: "Impact, Haettenschweiler, Arial Black, sans-serif",
-      fontSize: "86px",
-      fontStyle: "900",
-      stroke: "#05070a",
-      strokeThickness: 9
-    }).setOrigin(0.5, 0);
+    const logo = this.add.image(GAME_WIDTH / 2, 92, "ubt-logo");
+    logo.setDepth(10);
+    logo.setOrigin(0.5);
+    logo.setDisplaySize(520, 195);
+    this.shellObjects.push(logo);
 
     this.addShellText(GAME_WIDTH / 2, 168, dictionary.tagline, {
       color: "#f7f8ff",
