@@ -81,6 +81,12 @@ export type OnlineWeaponPickupState = {
   y: number;
 };
 
+export type OnlineJudgmentOrbState = {
+  id: string;
+  x: number;
+  y: number;
+};
+
 export type OnlineMatchRoundState = {
   aliveCount: number;
   remainingMs: number;
@@ -139,6 +145,11 @@ export type OnlineCombatEventDraft =
       aliveCount: number;
     }
   | {
+      type: "judgmentTransition";
+      defenderId: string;
+      challengerId?: string;
+    }
+  | {
       type: "roundMessage";
       message: string;
       color: string;
@@ -159,6 +170,8 @@ export type OnlineMatchState = {
   arena: OnlineArenaState;
   shots: OnlineShotState[];
   pickups?: OnlineWeaponPickupState[];
+  judgmentOrbs?: OnlineJudgmentOrbState[];
+  judgmentOrbCounts?: Record<string, number>;
   round: OnlineMatchRoundState;
 };
 

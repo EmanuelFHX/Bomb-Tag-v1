@@ -3,7 +3,7 @@ import { ARENA, BOMB, BOT, GAME_HEIGHT, GAME_WIDTH, PLAYER, ROUND_STAGES, WEAPON
 import { Bomb } from "../entities/Bomb";
 import { Player } from "../entities/Player";
 import { OnlineRoomClient } from "../online/OnlineRoomClient";
-import type { OnlineCombatEvent, OnlineCombatEventDraft, OnlineMatchPlayerState, OnlineMatchState, OnlineMusicState, OnlinePlayerSnapshot, OnlineRoomSnapshot, OnlineShotState, OnlineWeaponPickupState } from "../online/onlineTypes";
+import type { OnlineCombatEvent, OnlineCombatEventDraft, OnlineJudgmentOrbState, OnlineMatchPlayerState, OnlineMatchState, OnlineMusicState, OnlinePlayerSnapshot, OnlineRoomSnapshot, OnlineShotState, OnlineWeaponPickupState } from "../online/onlineTypes";
 import { GameSettings, Language, loadSettings, saveSettings } from "../settings";
 import { AudioSystem, type HitSoundVariant } from "../systems/AudioSystem";
 import { InputSystem } from "../systems/InputSystem";
@@ -19,6 +19,15 @@ const PLAYER_COLORS = [
   0xf1f765
 ];
 
+const JUDGMENT_ORB = {
+  required: 3,
+  radius: 12,
+  detectRadius: 44,
+  spawnEveryMs: 2800,
+  firstSpawnDelayMs: 1200,
+  maxActive: 1
+} as const;
+
 type BotIntent = {
   aimTarget: Phaser.Math.Vector2;
   moveDirection: Phaser.Math.Vector2;
@@ -27,6 +36,12 @@ type BotIntent = {
 };
 
 type WeaponPickup = {
+  id: string;
+  shape: Phaser.GameObjects.Arc;
+  ring: Phaser.GameObjects.Arc;
+};
+
+type JudgmentOrb = {
   id: string;
   shape: Phaser.GameObjects.Arc;
   ring: Phaser.GameObjects.Arc;
@@ -224,9 +239,15 @@ export class GameScene extends Phaser.Scene {
   private parryActiveUntil = new Map<string, number>();
   private spinThrowTrackers = new Map<string, SpinThrowTracker>();
   private weaponPickups: WeaponPickup[] = [];
+  private judgmentOrbs: JudgmentOrb[] = [];
   private shots: Shot[] = [];
   private weaponPickupSequence = 0;
+  private judgmentOrbSequence = 0;
   private nextWeaponSpawnAt = 0;
+  private nextJudgmentOrbSpawnAt = 0;
+  private judgmentOrbCounts = new Map<string, number>();
+  private judgmentOrbPips = new Map<string, Phaser.GameObjects.Arc[]>();
+  private onlineJudgmentOrbVisuals = new Map<string, JudgmentOrb>();
   private baseBombSpeedMultiplier = 1;
   private specialBombSpeedBonus = 0;
   private specialRoundLivesRestored = false;
@@ -293,6 +314,7 @@ export class GameScene extends Phaser.Scene {
     this.graphics = this.add.graphics();
     this.createArena(BOT.count + 1);
     this.createPlayers();
+    this.createJudgmentOrbPips();
     this.bomb = new Bomb(this, this.human);
     this.createHud();
     this.startRound(BOT.count + 1);
@@ -383,6 +405,7 @@ export class GameScene extends Phaser.Scene {
 
     this.updateBotThrows();
     this.updateWeapons();
+    this.updateJudgmentOrbs();
     this.updateBotWeaponActions();
     this.updateShots(deltaSeconds);
     this.bomb.update(deltaSeconds, this.arenaRect, this.arenaPolygon, this.arenaPolygonCenter);
@@ -497,6 +520,19 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.human.setBombHolder(false);
+  }
+
+  private createJudgmentOrbPips() {
+    for (const player of this.players) {
+      const pips = Array.from({ length: JUDGMENT_ORB.required }, (_, index) => {
+        const pip = this.add.circle(-14 + index * 14, PLAYER.radius + 28, 4, 0xffcf33, 0.18);
+        pip.setStrokeStyle(1, 0xfff0a6, 0.35);
+        pip.setVisible(false);
+        return pip;
+      });
+      player.container.add(pips);
+      this.judgmentOrbPips.set(player.id, pips);
+    }
   }
 
   private createHud() {
@@ -1077,6 +1113,12 @@ export class GameScene extends Phaser.Scene {
         height: Math.round(this.arenaRect.height)
       },
       shots: this.shots.map((shot) => this.createOnlineShotState(shot)),
+      judgmentOrbs: this.judgmentOrbs.map((orb) => ({
+        id: orb.id,
+        x: Math.round(orb.shape.x),
+        y: Math.round(orb.shape.y)
+      })),
+      judgmentOrbCounts: Object.fromEntries(this.judgmentOrbCounts),
       round: {
         aliveCount: this.getAlivePlayers().length,
         remainingMs: Math.max(0, Math.round(this.roundEndsAt - this.time.now)),
@@ -1342,6 +1384,8 @@ export class GameScene extends Phaser.Scene {
       players: this.toOnlineArray(match.players),
       shots: this.toOnlineArray(match.shots),
       pickups: this.toOnlineArray(match.pickups),
+      judgmentOrbs: this.toOnlineArray(match.judgmentOrbs),
+      judgmentOrbCounts: match.judgmentOrbCounts ?? {},
       arena: match.arena ?? {
         aliveCount,
         shape: aliveCount <= 3 ? "octagon" : "rectangle",
@@ -1433,6 +1477,8 @@ export class GameScene extends Phaser.Scene {
       this.bomb.updateRemoteVisuals();
       this.applyOnlineShots(match.shots ?? [], deltaSeconds);
       this.applyOnlinePickups(match.pickups ?? []);
+      this.applyOnlineJudgmentOrbs(match.judgmentOrbs ?? []);
+      this.applyOnlineJudgmentOrbCounts(match.judgmentOrbCounts ?? {});
       this.roundResolving = match.round.resolving;
       this.matchOver = match.round.matchOver;
       this.specialRoundLivesRestored = match.round.specialLivesRestored;
@@ -1459,6 +1505,8 @@ export class GameScene extends Phaser.Scene {
     this.bomb.updateRemoteVisuals();
     this.applyOnlineShots(match.shots ?? [], deltaSeconds);
     this.applyOnlinePickups(match.pickups ?? []);
+    this.applyOnlineJudgmentOrbs(match.judgmentOrbs ?? []);
+    this.applyOnlineJudgmentOrbCounts(match.judgmentOrbCounts ?? {});
 
     this.roundResolving = match.round.resolving;
     this.matchOver = match.round.matchOver;
@@ -1667,6 +1715,67 @@ export class GameScene extends Phaser.Scene {
     return visual;
   }
 
+  private applyOnlineJudgmentOrbs(orbs: OnlineJudgmentOrbState[]) {
+    const seen = new Set<string>();
+    for (const orb of orbs) {
+      seen.add(orb.id);
+      const visual = this.onlineJudgmentOrbVisuals.get(orb.id) ?? this.createOnlineJudgmentOrbVisual(orb);
+      visual.shape.setPosition(orb.x, orb.y);
+      visual.ring.setPosition(orb.x, orb.y);
+    }
+
+    for (const [id, visual] of this.onlineJudgmentOrbVisuals) {
+      if (seen.has(id)) {
+        continue;
+      }
+
+      this.tweens.killTweensOf(visual.ring);
+      visual.shape.destroy();
+      visual.ring.destroy();
+      this.onlineJudgmentOrbVisuals.delete(id);
+    }
+  }
+
+  private applyOnlineJudgmentOrbCounts(counts: Record<string, number>) {
+    this.judgmentOrbCounts.clear();
+    for (const [playerId, count] of Object.entries(counts)) {
+      this.judgmentOrbCounts.set(playerId, count);
+    }
+    this.updateJudgmentOrbPips();
+  }
+
+  private createOnlineJudgmentOrbVisual(orb: OnlineJudgmentOrbState) {
+    const ring = this.add.circle(orb.x, orb.y, JUDGMENT_ORB.radius + 10, 0xffcf33, 0.08);
+    ring.setStrokeStyle(3, 0xffcf33, 0.66);
+    ring.setDepth(2);
+    const shape = this.add.circle(orb.x, orb.y, JUDGMENT_ORB.radius, 0xffcf33, 0.96);
+    shape.setStrokeStyle(3, 0xfff0a6, 0.88);
+    shape.setDepth(3);
+
+    this.tweens.add({
+      targets: ring,
+      scale: 1.45,
+      alpha: 0.28,
+      duration: 540,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut"
+    });
+
+    const visual = { id: orb.id, shape, ring };
+    this.onlineJudgmentOrbVisuals.set(orb.id, visual);
+    return visual;
+  }
+
+  private clearOnlineJudgmentOrbVisuals() {
+    for (const visual of this.onlineJudgmentOrbVisuals.values()) {
+      this.tweens.killTweensOf(visual.ring);
+      visual.shape.destroy();
+      visual.ring.destroy();
+    }
+    this.onlineJudgmentOrbVisuals.clear();
+  }
+
   private updateOnlineShotVisuals(deltaSeconds: number) {
     const elapsedSeconds = Math.min(0.05, Math.max(0, deltaSeconds));
     for (const [id, visual] of this.onlineShotVisuals) {
@@ -1740,6 +1849,12 @@ export class GameScene extends Phaser.Scene {
         x: Math.round(visual.shape.x),
         y: Math.round(visual.shape.y)
       })),
+      judgmentOrbs: this.judgmentOrbs.map((orb) => ({
+        id: orb.id,
+        x: Math.round(orb.shape.x),
+        y: Math.round(orb.shape.y)
+      })),
+      judgmentOrbCounts: Object.fromEntries(this.judgmentOrbCounts),
       shots: this.shots.map((shot) => ({
         id: shot.id,
         x: Math.round(shot.shape.x),
@@ -1899,6 +2014,15 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (event.type === "judgmentTransition") {
+      const defender = this.players.find((player) => player.id === event.defenderId);
+      const challenger = this.players.find((player) => player.id === event.challengerId);
+      if (defender) {
+        this.playJudgmentTransition(defender, false, challenger);
+      }
+      return;
+    }
+
     this.currentRoundMessageKey = event.key;
     this.showRoundMessage(event.message, event.color, event.duration);
   }
@@ -2010,6 +2134,145 @@ export class GameScene extends Phaser.Scene {
         this.destroyWeaponPickup(pickup);
       }
     }
+  }
+
+  private updateJudgmentOrbs() {
+    if (!this.isJudgmentOrbPhase()) {
+      this.clearJudgmentOrbs();
+      this.updateJudgmentOrbPips();
+      return;
+    }
+
+    if (this.time.now >= this.nextJudgmentOrbSpawnAt) {
+      if (this.judgmentOrbs.length < JUDGMENT_ORB.maxActive) {
+        this.spawnJudgmentOrb();
+      }
+      this.nextJudgmentOrbSpawnAt = this.time.now + JUDGMENT_ORB.spawnEveryMs;
+    }
+
+    for (const player of this.getAlivePlayers()) {
+      const orb = this.judgmentOrbs.find((item) => (
+        Phaser.Math.Distance.Between(player.x, player.y, item.shape.x, item.shape.y) <= JUDGMENT_ORB.detectRadius
+      ));
+      if (!orb) {
+        continue;
+      }
+
+      this.collectJudgmentOrb(player, orb);
+      break;
+    }
+
+    this.updateJudgmentOrbPips();
+  }
+
+  private spawnJudgmentOrb() {
+    const id = `judgment-orb-${this.time.now}-${this.judgmentOrbSequence}`;
+    this.judgmentOrbSequence += 1;
+    const point = this.getBalancedJudgmentOrbPoint();
+    const x = point.x;
+    const y = point.y;
+    const ring = this.add.circle(x, y, JUDGMENT_ORB.radius + 10, 0xffcf33, 0.08);
+    ring.setStrokeStyle(3, 0xffcf33, 0.66);
+    ring.setDepth(2);
+    const shape = this.add.circle(x, y, JUDGMENT_ORB.radius, 0xffcf33, 0.96);
+    shape.setStrokeStyle(3, 0xfff0a6, 0.88);
+    shape.setDepth(3);
+
+    this.judgmentOrbs.push({ id, shape, ring });
+    this.tweens.add({
+      targets: ring,
+      scale: 1.45,
+      alpha: 0.28,
+      duration: 540,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut"
+    });
+    this.syncOnlineMatchState(true);
+  }
+
+  private getBalancedJudgmentOrbPoint() {
+    const alivePlayers = this.getAlivePlayers();
+    const rect = this.arenaRect;
+    const fallback = new Phaser.Math.Vector2(rect.centerX, rect.centerY);
+    if (alivePlayers.length !== 2) {
+      return fallback;
+    }
+
+    const [first, second] = alivePlayers;
+    const between = new Phaser.Math.Vector2(second.x - first.x, second.y - first.y);
+    const midpoint = new Phaser.Math.Vector2((first.x + second.x) / 2, (first.y + second.y) / 2);
+    const perpendicular = between.lengthSq() > 0
+      ? new Phaser.Math.Vector2(-between.y, between.x).normalize()
+      : new Phaser.Math.Vector2(0, 1);
+    const centerPull = new Phaser.Math.Vector2(rect.centerX - midpoint.x, rect.centerY - midpoint.y).scale(0.36);
+
+    for (let attempt = 0; attempt < 18; attempt += 1) {
+      const side = attempt % 2 === 0 ? 1 : -1;
+      const offset = Phaser.Math.Between(18, 112) * side;
+      const candidate = midpoint.clone()
+        .add(centerPull)
+        .add(perpendicular.clone().scale(offset));
+      candidate.x = Phaser.Math.Clamp(candidate.x, rect.left + 90, rect.right - 90);
+      candidate.y = Phaser.Math.Clamp(candidate.y, rect.top + 90, rect.bottom - 90);
+      if (!this.arenaPolygon || Phaser.Geom.Polygon.Contains(this.arenaPolygon, candidate.x, candidate.y)) {
+        return candidate;
+      }
+    }
+
+    return fallback;
+  }
+
+  private collectJudgmentOrb(player: Player, orb: JudgmentOrb) {
+    this.destroyJudgmentOrb(orb);
+    const count = Math.min(JUDGMENT_ORB.required, (this.judgmentOrbCounts.get(player.id) ?? 0) + 1);
+    this.judgmentOrbCounts.set(player.id, count);
+    this.audio.playWeaponPickup();
+    this.playJudgmentOrbCollectEffect(player);
+    this.updateJudgmentOrbPips();
+    this.syncOnlineMatchState(true);
+
+    if (count >= JUDGMENT_ORB.required) {
+      this.clearJudgmentOrbs();
+      this.judgmentLastAttacker = player;
+      this.playJudgmentTransition(this.getJudgmentDefenderFromOrbRace(player), true, player);
+    }
+  }
+
+  private getJudgmentDefenderFromOrbRace(collector: Player) {
+    const alivePlayers = this.getAlivePlayers();
+    const lowestScore = Math.min(...alivePlayers.map((player) => this.judgmentOrbCounts.get(player.id) ?? 0));
+    return alivePlayers.find((player) => player !== collector && (this.judgmentOrbCounts.get(player.id) ?? 0) === lowestScore)
+      ?? alivePlayers.find((player) => player !== collector)
+      ?? collector;
+  }
+
+  private playJudgmentOrbCollectEffect(player: Player) {
+    const ring = this.add.circle(player.x, player.y, PLAYER.radius + 10, 0xffcf33, 0.08);
+    ring.setStrokeStyle(3, 0xffcf33, 0.82);
+    ring.setDepth(8);
+    this.tweens.add({
+      targets: ring,
+      scale: 1.8,
+      alpha: 0,
+      duration: 260,
+      ease: "Quad.easeOut",
+      onComplete: () => ring.destroy()
+    });
+  }
+
+  private destroyJudgmentOrb(orb: JudgmentOrb) {
+    this.tweens.killTweensOf(orb.ring);
+    orb.shape.destroy();
+    orb.ring.destroy();
+    this.judgmentOrbs = this.judgmentOrbs.filter((item) => item !== orb);
+  }
+
+  private clearJudgmentOrbs() {
+    for (const orb of [...this.judgmentOrbs]) {
+      this.destroyJudgmentOrb(orb);
+    }
+    this.clearOnlineJudgmentOrbVisuals();
   }
 
   private spawnWeaponPickup() {
@@ -2562,6 +2825,14 @@ export class GameScene extends Phaser.Scene {
     return this.judgmentPhase && !this.judgmentDuelPhase;
   }
 
+  private isJudgmentOrbPhase() {
+    return this.specialRoundLivesRestored &&
+      !this.judgmentPhase &&
+      this.getAlivePlayers().length === 2 &&
+      !this.roundResolving &&
+      !this.matchOver;
+  }
+
   private resolveCountdown() {
     const remainingMs = this.roundEndsAt - this.time.now;
     if (remainingMs > 0 || this.roundResolving) {
@@ -2688,12 +2959,17 @@ export class GameScene extends Phaser.Scene {
     this.hudTimer.setScale(1);
     this.audio.resetTimerTicks();
     this.clearWeaponsAndShots();
+    this.clearJudgmentOrbs();
     this.botParryThinkAt.clear();
     this.parryReadyAt.clear();
     this.parryActiveUntil.clear();
     this.spinThrowTrackers.clear();
     this.baseBombSpeedMultiplier = stage.bombSpeedMultiplier;
     this.specialBombSpeedBonus = 0;
+    if (alivePlayers.length === 2 && !this.judgmentPhase) {
+      this.judgmentOrbCounts.clear();
+      this.nextJudgmentOrbSpawnAt = this.time.now + JUDGMENT_ORB.firstSpawnDelayMs;
+    }
     this.createArena(alivePlayers.length);
     for (const player of alivePlayers) {
       player.configureDash(
@@ -2859,21 +3135,23 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.specialRoundLivesRestored && !this.judgmentPhase) {
-      this.playJudgmentTransition(winner);
-      return;
-    }
-
     this.endMatch(winner);
   }
 
-  private playJudgmentTransition(defender: Player) {
+  private playJudgmentTransition(defender: Player, shouldQueueOnlineEvent = true, challenger?: Player) {
     this.roundResolving = true;
     this.clearWeaponsAndShots();
     this.clearHomingIndicator();
     this.bomb.setVisible(false);
     this.playJudgmentBellSound();
     this.startJudgmentMusic();
+    if (shouldQueueOnlineEvent) {
+      this.queueOnlineEvent({
+        type: "judgmentTransition",
+        defenderId: defender.id,
+        challengerId: challenger?.id
+      });
+    }
 
     const dictionary = TEXT[this.language];
     const overlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 1);
@@ -2943,16 +3221,16 @@ export class GameScene extends Phaser.Scene {
         title.destroy();
         subtitle.destroy();
         ring.destroy();
-        this.startJudgmentRound(defender);
+        this.startJudgmentRound(defender, challenger);
       }
     });
   }
 
-  private startJudgmentRound(defender: Player) {
+  private startJudgmentRound(defender: Player, initialAttacker?: Player) {
     this.judgmentPhase = true;
     this.judgmentDuelPhase = false;
     this.judgmentDefender = defender;
-    this.judgmentLastAttacker = undefined;
+    this.judgmentLastAttacker = initialAttacker;
     this.roundResolving = false;
     this.matchOver = false;
     this.specialRoundLivesRestored = true;
@@ -2961,6 +3239,8 @@ export class GameScene extends Phaser.Scene {
     this.nextWeaponSpawnAt = this.time.now + WEAPON.specialFirstSpawnDelayMs;
     this.nextCriticalPulseAt = 0;
     this.clearWeaponsAndShots();
+    this.clearJudgmentOrbs();
+    this.judgmentOrbCounts.clear();
     this.parryReadyAt.clear();
     this.parryActiveUntil.clear();
     this.botParryThinkAt.clear();
@@ -3034,6 +3314,7 @@ export class GameScene extends Phaser.Scene {
     this.winner = winner;
     this.currentRoundMessageKey = "matchOver";
     this.bomb.setVisible(false);
+    this.clearJudgmentOrbs();
     this.showRoundMessage(TEXT[this.language].wins(this.getPlayerName(winner)), "#ffcf33", 999999);
   }
 
@@ -3523,6 +3804,27 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private updateJudgmentOrbPips() {
+    const isVisible = this.isJudgmentOrbPhase();
+    for (const player of this.players) {
+      const pips = this.judgmentOrbPips.get(player.id);
+      if (!pips) {
+        continue;
+      }
+
+      const count = this.judgmentOrbCounts.get(player.id) ?? 0;
+      for (let index = 0; index < pips.length; index += 1) {
+        const pip = pips[index];
+        const isFilled = index < count;
+        pip.setVisible(isVisible && player.alive);
+        pip.setFillStyle(isFilled ? 0xffcf33 : 0x2a2f3a, isFilled ? 1 : 0.55);
+        pip.setStrokeStyle(1, isFilled ? 0xfff0a6 : 0x6d7583, isFilled ? 0.92 : 0.35);
+        pip.setAlpha(isFilled ? 1 : 0.48);
+        pip.setScale(isFilled ? 1.18 : 1);
+      }
+    }
+  }
+
   private updateHumanLivesHud() {
     const isVisible = this.isFinalPhase();
     this.hudLivesLabel.setVisible(isVisible);
@@ -3594,6 +3896,14 @@ export class GameScene extends Phaser.Scene {
       moveDirection.copy(shotThreat.escapeDirection);
       shouldDash = shotThreat.risk > (isFinalPhase ? 0.88 : 0.82) && bot.dashChargeCount > 0;
       return { aimTarget, moveDirection, shouldDash, shouldParry };
+    }
+
+    if (this.isJudgmentOrbPhase()) {
+      const orb = this.getNearestJudgmentOrb(bot);
+      if (orb && this.bomb.owner !== bot) {
+        moveDirection.set(orb.shape.x - bot.x, orb.shape.y - bot.y).normalize();
+        return { aimTarget, moveDirection, shouldDash, shouldParry };
+      }
     }
 
     if (this.bomb.state === "HELD") {
@@ -3759,6 +4069,15 @@ export class GameScene extends Phaser.Scene {
       .filter((pickup) => (
         Phaser.Math.Distance.Squared(player.x, player.y, pickup.shape.x, pickup.shape.y) <= seekRadius ** 2
       ))
+      .sort((a, b) => {
+        const distanceA = Phaser.Math.Distance.Squared(player.x, player.y, a.shape.x, a.shape.y);
+        const distanceB = Phaser.Math.Distance.Squared(player.x, player.y, b.shape.x, b.shape.y);
+        return distanceA - distanceB;
+      })[0];
+  }
+
+  private getNearestJudgmentOrb(player: Player) {
+    return this.judgmentOrbs
       .sort((a, b) => {
         const distanceA = Phaser.Math.Distance.Squared(player.x, player.y, a.shape.x, a.shape.y);
         const distanceB = Phaser.Math.Distance.Squared(player.x, player.y, b.shape.x, b.shape.y);
