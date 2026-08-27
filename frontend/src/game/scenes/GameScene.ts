@@ -345,9 +345,7 @@ export class GameScene extends Phaser.Scene {
     this.time.delayedCall(250, () => this.connectOnlineRoom());
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
-      this.audio.unlock();
-      this.startMatchMusic();
-      this.primeFinalBattleMusic();
+      this.unlockAudioFromTouch();
       if (this.mobileControlsEnabled) {
         if (!this.isPointerOverMobileControl(pointer)) {
           this.updateMobileAimFromPointer(pointer);
@@ -751,6 +749,18 @@ export class GameScene extends Phaser.Scene {
     this.audio.unlock();
     this.startMatchMusic();
     this.primeFinalBattleMusic();
+    this.requestMobileFullscreen();
+  }
+
+  private requestMobileFullscreen() {
+    if (!this.mobileControlsEnabled || this.scale.isFullscreen || !this.scale.fullscreen.available) {
+      return;
+    }
+
+    this.scale.startFullscreen();
+    this.time.delayedCall(180, () => {
+      this.scale.refresh();
+    });
   }
 
   private updateMobileControlsVisual() {

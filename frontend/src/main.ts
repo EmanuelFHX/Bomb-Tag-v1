@@ -23,8 +23,13 @@ const config: Phaser.Types.Core.GameConfig = {
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    expandParent: true,
+    fullscreenTarget: "app",
     width: 1280,
     height: 720
+  },
+  input: {
+    activePointers: 4
   },
   scene: [BootScene, MenuScene, LobbyScene, GameScene],
   physics: {
