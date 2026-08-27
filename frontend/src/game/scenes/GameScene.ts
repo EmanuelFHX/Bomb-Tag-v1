@@ -109,6 +109,8 @@ const TEXT = {
     panic: "PANIC",
     special: "SPECIAL",
     finalDuel: "FINAL DUEL",
+    judgment: "JUDGMENT HOUR",
+    judgmentDefense: "DEFEND YOUR POSITION",
     playersRemain: (count: number) => `${count} PLAYERS REMAIN`,
     threePlayers: "3 PLAYERS LEFT\n2 RECHARGING DASHES",
     finalCutsceneTitle: "FINAL ROUND",
@@ -139,6 +141,8 @@ const TEXT = {
     panic: "PANICO",
     special: "ESPECIAL",
     finalDuel: "DUELO FINAL",
+    judgment: "HORA DO JULGAMENTO",
+    judgmentDefense: "DEFENDA SUA POSIÇÃO",
     playersRemain: (count: number) => `${count} JOGADORES RESTANTES`,
     threePlayers: "3 JOGADORES RESTANTES\n2 DASHES RECARREGAVEIS",
     finalCutsceneTitle: "RODADA FINAL",
@@ -195,7 +199,7 @@ export class GameScene extends Phaser.Scene {
     graphics: Phaser.GameObjects.Graphics;
     expiresAt: number;
   };
-  private currentRoundMessageKey: "playersRemain" | "threePlayers" | "livesRestored" | "finalDuel" | "matchOver" | "" = "";
+  private currentRoundMessageKey: "playersRemain" | "threePlayers" | "livesRestored" | "finalDuel" | "judgmentDefense" | "matchOver" | "" = "";
   private roundEndsAt = 0;
   private roundTimerSeconds: number = BOMB.timerSeconds;
   private roundResolving = false;
@@ -230,6 +234,8 @@ export class GameScene extends Phaser.Scene {
   private matchMusicStarted = false;
   private finalBattleMusic?: HTMLAudioElement;
   private finalBattleMusicPrimed = false;
+  private judgmentMusic?: HTMLAudioElement;
+  private judgmentBell?: HTMLAudioElement;
   private onlineClient?: OnlineRoomClient;
   private onlineConnecting = false;
   private onlineHostHeartbeat?: number;
@@ -257,6 +263,13 @@ export class GameScene extends Phaser.Scene {
   private onlineKnownLives = new Map<string, number>();
   private lastLifeFeedbackAt = new Map<string, number>();
   private nextDebugSnapshotAt = 0;
+  private judgmentPhase = false;
+  private judgmentDuelPhase = false;
+  private judgmentDefender?: Player;
+  private judgmentLastAttacker?: Player;
+  private judgmentCenter = new Phaser.Math.Vector2(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+  private readonly judgmentOuterRadius = 318;
+  private readonly judgmentInnerRadius = 108;
 
   constructor() {
     super("GameScene");
@@ -305,6 +318,8 @@ export class GameScene extends Phaser.Scene {
     this.events.once("shutdown", () => {
       this.matchMusic?.pause();
       this.finalBattleMusic?.pause();
+      this.judgmentMusic?.pause();
+      this.judgmentBell?.pause();
       this.stopOnlineHostHeartbeat();
       this.onlineClient?.disconnect();
     });
@@ -363,10 +378,7 @@ export class GameScene extends Phaser.Scene {
         this.updateRemoteControlledSlot(player, deltaSeconds);
         this.updateSpinThrowReadiness(player);
       }
-      player.keepInside(this.arenaRect);
-      if (this.arenaPolygon) {
-        player.keepInsidePolygon(this.arenaPolygon, this.arenaPolygonCenter);
-      }
+      this.keepPlayerInActiveArena(player);
     }
 
     this.updateBotThrows();
@@ -374,6 +386,7 @@ export class GameScene extends Phaser.Scene {
     this.updateBotWeaponActions();
     this.updateShots(deltaSeconds);
     this.bomb.update(deltaSeconds, this.arenaRect, this.arenaPolygon, this.arenaPolygonCenter);
+    this.resolveJudgmentBombBounds();
     this.updateHomingIndicator();
     this.syncOnlinePlayer();
     this.syncOnlineMatchState(forceOnlineMatchSync || (this.shots.length > 0 && this.time.now >= this.nextOnlineMatchSyncAt));
@@ -396,6 +409,11 @@ export class GameScene extends Phaser.Scene {
     this.graphics.clear();
     this.graphics.fillStyle(palette.outer, 1);
     this.graphics.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+    if (this.isJudgmentDefensePhase()) {
+      this.drawJudgmentArena(palette);
+      return;
+    }
 
     if (aliveCount <= 3) {
       this.drawOctagonArena(palette);
@@ -426,6 +444,32 @@ export class GameScene extends Phaser.Scene {
 
     this.graphics.lineStyle(ARENA.wallThickness, palette.wall, 1);
     this.graphics.strokePoints(points, true, true);
+  }
+
+  private drawJudgmentArena(palette: { outer: number; floor: number; wall: number; grid: number }) {
+    const centerX = this.judgmentCenter.x;
+    const centerY = this.judgmentCenter.y;
+    this.arenaRect = new Phaser.Geom.Rectangle(
+      centerX - this.judgmentOuterRadius,
+      centerY - this.judgmentOuterRadius,
+      this.judgmentOuterRadius * 2,
+      this.judgmentOuterRadius * 2
+    );
+
+    this.graphics.fillStyle(palette.floor, 1);
+    this.graphics.fillCircle(centerX, centerY, this.judgmentOuterRadius);
+    this.graphics.lineStyle(ARENA.wallThickness, palette.wall, 1);
+    this.graphics.strokeCircle(centerX, centerY, this.judgmentOuterRadius);
+
+    this.graphics.lineStyle(2, palette.grid, 0.18);
+    for (let radius = this.judgmentInnerRadius + 58; radius < this.judgmentOuterRadius; radius += 58) {
+      this.graphics.strokeCircle(centerX, centerY, radius);
+    }
+
+    this.graphics.fillStyle(0x0d141b, 0.72);
+    this.graphics.fillCircle(centerX, centerY, this.judgmentInnerRadius);
+    this.graphics.lineStyle(5, 0xffcf33, 0.78);
+    this.graphics.strokeCircle(centerX, centerY, this.judgmentInnerRadius);
   }
 
   private createPlayers() {
@@ -552,7 +596,9 @@ export class GameScene extends Phaser.Scene {
   private launchBomb(direction: Phaser.Math.Vector2) {
     const owner = this.bomb.owner;
     const isFinalPhase = this.isFinalPhase();
-    const homingTarget = isFinalPhase ? this.getSpecialBombTarget(owner, direction) : null;
+    const homingTarget = isFinalPhase && !this.isJudgmentDefensePhase()
+      ? this.getSpecialBombTarget(owner, direction)
+      : null;
     const hasSpinBoost = this.consumeSpinThrowBoost(owner);
     const launched = this.bomb.launch(direction, hasSpinBoost ? BOMB.spinThrowSpeedMultiplier : 1, hasSpinBoost && isFinalPhase);
     if (!launched) {
@@ -565,6 +611,8 @@ export class GameScene extends Phaser.Scene {
     this.bomb.setHomingTarget(homingTarget);
     if (homingTarget) {
       this.showHomingIndicator(homingTarget);
+    } else {
+      this.clearHomingIndicator();
     }
     if (!this.isFinalPhase()) {
       return launched;
@@ -709,7 +757,6 @@ export class GameScene extends Phaser.Scene {
       }
       const redirected = this.bomb.parryToward(player, target);
       if (redirected) {
-        this.showHomingIndicator(target);
         this.syncOnlineMatchState(true);
       }
       return redirected;
@@ -723,6 +770,7 @@ export class GameScene extends Phaser.Scene {
 
   private startFinalBattleMusic() {
     this.stopMatchMusic();
+    this.stopJudgmentMusic();
     const music = this.getFinalBattleMusic();
     this.finalBattleMusicPrimed = true;
     music.muted = false;
@@ -765,6 +813,39 @@ export class GameScene extends Phaser.Scene {
       music.pause();
       music.currentTime = 0;
       this.matchMusicStarted = false;
+    });
+  }
+
+  private startJudgmentMusic() {
+    this.stopMatchMusic();
+    this.stopFinalBattleMusic(1000);
+    const music = this.getJudgmentMusic();
+    music.muted = false;
+    music.volume = this.getIntroMusicVolume();
+    music.currentTime = 11;
+    void music.play().then(() => {
+      this.fadeMusic(music, this.getTargetMusicVolume(), 3000);
+    }).catch(() => {
+      const resume = () => {
+        music.muted = false;
+        music.volume = this.getIntroMusicVolume();
+        music.currentTime = 11;
+        void music.play().then(() => this.fadeMusic(music, this.getTargetMusicVolume(), 3000));
+      };
+      this.input.once("pointerdown", resume);
+      this.input.keyboard?.once("keydown", resume);
+    });
+  }
+
+  private stopJudgmentMusic(durationMs = 600) {
+    const music = this.judgmentMusic;
+    if (!music || music.paused) {
+      return;
+    }
+
+    this.fadeMusic(music, 0, durationMs, () => {
+      music.pause();
+      music.currentTime = 11;
     });
   }
 
@@ -812,6 +893,29 @@ export class GameScene extends Phaser.Scene {
     this.finalBattleMusic.preload = "auto";
     this.finalBattleMusic.crossOrigin = "anonymous";
     return this.finalBattleMusic;
+  }
+
+  private getJudgmentMusic() {
+    this.judgmentMusic ??= new Audio("/audio/judgment-chase.mp3");
+    this.judgmentMusic.loop = true;
+    this.judgmentMusic.preload = "auto";
+    this.judgmentMusic.crossOrigin = "anonymous";
+    return this.judgmentMusic;
+  }
+
+  private playJudgmentBellSound() {
+    const bell = this.getJudgmentBellSound();
+    bell.pause();
+    bell.currentTime = 0;
+    bell.volume = 0.55 * this.settings.volume;
+    void bell.play().catch(() => undefined);
+  }
+
+  private getJudgmentBellSound() {
+    this.judgmentBell ??= new Audio("/audio/judgment-bell.mp3");
+    this.judgmentBell.preload = "auto";
+    this.judgmentBell.crossOrigin = "anonymous";
+    return this.judgmentBell;
   }
 
   private getMatchMusic() {
@@ -907,10 +1011,7 @@ export class GameScene extends Phaser.Scene {
       dashPressed
     );
     this.updateSpinThrowReadiness(this.human);
-    this.human.keepInside(this.arenaRect);
-    if (this.arenaPolygon) {
-      this.human.keepInsidePolygon(this.arenaPolygon, this.arenaPolygonCenter);
-    }
+    this.keepPlayerInActiveArena(this.human);
   }
 
   private syncOnlineMatchState(force = false) {
@@ -1751,10 +1852,6 @@ export class GameScene extends Phaser.Scene {
     if (event.type === "bombHit") {
       this.audio.playHitVariant(event.variant as HitSoundVariant, false);
       this.bomb.playTransferBurst(event.isSpecial);
-      const target = this.players.find((player) => player.id === event.nextOwnerId);
-      if (target) {
-        this.showHomingIndicator(target);
-      }
       return;
     }
 
@@ -1811,6 +1908,10 @@ export class GameScene extends Phaser.Scene {
       return "none";
     }
 
+    if (this.isJudgmentDefensePhase()) {
+      return "judgment";
+    }
+
     return this.isFinalPhase() ? "final" : "match";
   }
 
@@ -1820,6 +1921,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.lastOnlineMusicState = state;
+    if (state === "judgment") {
+      this.startJudgmentMusic();
+      return;
+    }
+
     if (state === "final") {
       this.startFinalBattleMusic();
       return;
@@ -1827,21 +1933,23 @@ export class GameScene extends Phaser.Scene {
 
     if (state === "match") {
       this.stopFinalBattleMusic();
+      this.stopJudgmentMusic();
       this.startMatchMusic();
       return;
     }
 
     this.stopMatchMusic();
     this.stopFinalBattleMusic();
+    this.stopJudgmentMusic();
   }
 
-  private stopFinalBattleMusic() {
+  private stopFinalBattleMusic(durationMs = 600) {
     const music = this.finalBattleMusic;
     if (!music || music.paused) {
       return;
     }
 
-    this.fadeMusic(music, 0, 600, () => {
+    this.fadeMusic(music, 0, durationMs, () => {
       music.pause();
       music.currentTime = 0;
       this.finalBattleMusicPrimed = false;
@@ -1880,6 +1988,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     for (const player of this.getAlivePlayers()) {
+      if (this.isJudgmentDefensePhase() && player !== this.judgmentDefender) {
+        continue;
+      }
+
       if (player.hasWeapon) {
         continue;
       }
@@ -1903,14 +2015,20 @@ export class GameScene extends Phaser.Scene {
   private spawnWeaponPickup() {
     const id = `pickup-${this.time.now}-${this.weaponPickupSequence}`;
     this.weaponPickupSequence += 1;
-    const x = Phaser.Math.Between(
+    let x = Phaser.Math.Between(
       Math.ceil(this.arenaRect.left + 72),
       Math.floor(this.arenaRect.right - 72)
     );
-    const y = Phaser.Math.Between(
+    let y = Phaser.Math.Between(
       Math.ceil(this.arenaRect.top + 72),
       Math.floor(this.arenaRect.bottom - 72)
     );
+    if (this.isJudgmentDefensePhase()) {
+      const angle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+      const radius = Phaser.Math.Between(18, this.judgmentInnerRadius - 28);
+      x = Math.round(this.judgmentCenter.x + Math.cos(angle) * radius);
+      y = Math.round(this.judgmentCenter.y + Math.sin(angle) * radius);
+    }
     const ring = this.add.circle(x, y, WEAPON.pickupRadius + 8, 0x86f7ff, 0.08);
     ring.setStrokeStyle(2, 0x86f7ff, 0.55);
     ring.setDepth(1);
@@ -1965,6 +2083,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private fireWeapon(owner: Player, direction: Phaser.Math.Vector2) {
+    if (this.isJudgmentDefensePhase() && owner !== this.judgmentDefender) {
+      return false;
+    }
+
     if (!owner.consumeWeapon() || direction.lengthSq() === 0) {
       return false;
     }
@@ -2062,8 +2184,16 @@ export class GameScene extends Phaser.Scene {
     this.showRoundMessage(TEXT[this.language].eliminated(this.getPlayerName(eliminated)), "#86f7ff", 1050);
 
     const alivePlayers = this.getAlivePlayers();
+    if (this.isJudgmentDefensePhase() && eliminated === this.judgmentDefender) {
+      const challenger = this.judgmentLastAttacker?.alive
+        ? this.judgmentLastAttacker
+        : alivePlayers[0];
+      this.time.delayedCall(1050, () => this.startJudgmentDuel(challenger, eliminated));
+      return;
+    }
+
     if (alivePlayers.length <= 1) {
-      this.time.delayedCall(1250, () => this.endMatch(alivePlayers[0]));
+      this.time.delayedCall(1250, () => this.resolveSingleSurvivor(alivePlayers[0]));
       return;
     }
 
@@ -2273,7 +2403,15 @@ export class GameScene extends Phaser.Scene {
         const remainingSeconds = Math.max(0, (this.roundEndsAt - this.time.now) / 1000);
 
         this.transferBomb(player);
-        if (this.isFinalPhase()) {
+        if (
+          this.isJudgmentDefensePhase() &&
+          player === this.judgmentDefender &&
+          previousOwner !== player &&
+          previousOwner.alive
+        ) {
+          this.judgmentLastAttacker = previousOwner;
+        }
+        if (this.isFinalPhase() && !this.isJudgmentDefensePhase()) {
           const bonusSeconds = this.getAlivePlayers().length <= 2 ? 1 : 0.5;
           this.roundEndsAt += bonusSeconds * 1000;
           this.roundTimerSeconds += bonusSeconds;
@@ -2420,6 +2558,10 @@ export class GameScene extends Phaser.Scene {
     return this.specialRoundLivesRestored || this.getAlivePlayers().length <= 3;
   }
 
+  private isJudgmentDefensePhase() {
+    return this.judgmentPhase && !this.judgmentDuelPhase;
+  }
+
   private resolveCountdown() {
     const remainingMs = this.roundEndsAt - this.time.now;
     if (remainingMs > 0 || this.roundResolving) {
@@ -2446,8 +2588,24 @@ export class GameScene extends Phaser.Scene {
     this.showRoundMessage(TEXT[this.language].eliminated(this.getPlayerName(eliminated)), "#ff5d4f", 1100);
 
     const alivePlayers = this.getAlivePlayers();
+    if (this.isJudgmentDefensePhase()) {
+      if (eliminated === this.judgmentDefender) {
+        const challenger = this.judgmentLastAttacker?.alive
+          ? this.judgmentLastAttacker
+          : alivePlayers[0];
+        this.time.delayedCall(1200, () => this.startJudgmentDuel(challenger, eliminated));
+        return;
+      }
+
+      const defender = this.judgmentDefender;
+      if (defender?.alive) {
+        this.time.delayedCall(1200, () => this.endMatch(defender));
+      }
+      return;
+    }
+
     if (alivePlayers.length <= 1) {
-      this.time.delayedCall(1300, () => this.endMatch(alivePlayers[0]));
+      this.time.delayedCall(1300, () => this.resolveSingleSurvivor(alivePlayers[0]));
       return;
     }
 
@@ -2502,7 +2660,8 @@ export class GameScene extends Phaser.Scene {
 
   private startRound(aliveCountOrMessage: number | string) {
     const alivePlayers = this.getAlivePlayers();
-    const stage = this.getRoundStage(alivePlayers.length);
+    const isJudgmentDefense = this.isJudgmentDefensePhase();
+    const stage = this.getRoundStage(isJudgmentDefense ? 2 : alivePlayers.length);
     const nextOwner = Phaser.Utils.Array.GetRandom(alivePlayers);
     const isSpecialRound = alivePlayers.length === 3;
     const shouldRestoreSpecialLives = isSpecialRound && !this.specialRoundLivesRestored;
@@ -2523,7 +2682,7 @@ export class GameScene extends Phaser.Scene {
     this.roundResolving = false;
     this.roundTimerSeconds = stage.timerSeconds;
     this.roundEndsAt = this.time.now + stage.timerSeconds * 1000;
-    this.nextWeaponSpawnAt = this.time.now + (isSpecialRound ? WEAPON.specialFirstSpawnDelayMs : WEAPON.firstSpawnDelayMs);
+    this.nextWeaponSpawnAt = this.time.now + (this.isFinalPhase() ? WEAPON.specialFirstSpawnDelayMs : WEAPON.firstSpawnDelayMs);
     this.nextCriticalPulseAt = 0;
     this.dangerOverlay.setAlpha(0);
     this.hudTimer.setScale(1);
@@ -2538,15 +2697,15 @@ export class GameScene extends Phaser.Scene {
     this.createArena(alivePlayers.length);
     for (const player of alivePlayers) {
       player.configureDash(
-        alivePlayers.length <= 3 ? PLAYER.specialDashCharges : PLAYER.normalDashCharges,
-        alivePlayers.length <= 3
+        this.isFinalPhase() ? PLAYER.specialDashCharges : PLAYER.normalDashCharges,
+        this.isFinalPhase()
       );
       player.resetDashCharges();
       if (shouldRestoreSpecialLives) {
         player.restoreLives();
       }
       player.clearWeapon();
-      player.keepInside(this.arenaRect);
+      this.keepPlayerInActiveArena(player);
     }
     if (isSpecialRound) {
       this.specialRoundLivesRestored = true;
@@ -2695,6 +2854,180 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  private resolveSingleSurvivor(winner?: Player) {
+    if (!winner) {
+      return;
+    }
+
+    if (this.specialRoundLivesRestored && !this.judgmentPhase) {
+      this.playJudgmentTransition(winner);
+      return;
+    }
+
+    this.endMatch(winner);
+  }
+
+  private playJudgmentTransition(defender: Player) {
+    this.roundResolving = true;
+    this.clearWeaponsAndShots();
+    this.clearHomingIndicator();
+    this.bomb.setVisible(false);
+    this.playJudgmentBellSound();
+    this.startJudgmentMusic();
+
+    const dictionary = TEXT[this.language];
+    const overlay = this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x000000, 1);
+    overlay.setDepth(32);
+
+    const title = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 56, dictionary.judgment, {
+      color: "#ffcf33",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "58px",
+      fontStyle: "900",
+      stroke: "#5b1515",
+      strokeThickness: 8
+    });
+    title.setOrigin(0.5);
+    title.setDepth(33);
+    title.setAlpha(0);
+    title.setScale(0.72);
+
+    const subtitle = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2 + 42, dictionary.judgmentDefense, {
+      color: "#f7f8ff",
+      fontFamily: "Arial Black, ui-sans-serif, system-ui",
+      fontSize: "36px",
+      fontStyle: "900",
+      stroke: "#0c0f16",
+      strokeThickness: 6
+    });
+    subtitle.setOrigin(0.5);
+    subtitle.setDepth(33);
+    subtitle.setAlpha(0);
+    subtitle.setScale(0.76);
+
+    const ring = this.add.circle(GAME_WIDTH / 2, GAME_HEIGHT / 2, 118, 0xffcf33, 0);
+    ring.setStrokeStyle(6, 0xffcf33, 0.82);
+    ring.setDepth(33);
+    ring.setAlpha(0);
+
+    this.tweens.add({
+      targets: title,
+      alpha: 1,
+      scale: 1,
+      duration: 620,
+      ease: "Back.easeOut"
+    });
+    this.tweens.add({
+      targets: ring,
+      alpha: 0.7,
+      scale: 2.35,
+      duration: 1100,
+      ease: "Quad.easeOut"
+    });
+    this.tweens.add({
+      targets: subtitle,
+      alpha: 1,
+      scale: 1,
+      delay: 1550,
+      duration: 680,
+      ease: "Back.easeOut"
+    });
+    this.tweens.add({
+      targets: overlay,
+      alpha: 0,
+      delay: 4480,
+      duration: 520,
+      ease: "Quad.easeIn",
+      onComplete: () => {
+        overlay.destroy();
+        title.destroy();
+        subtitle.destroy();
+        ring.destroy();
+        this.startJudgmentRound(defender);
+      }
+    });
+  }
+
+  private startJudgmentRound(defender: Player) {
+    this.judgmentPhase = true;
+    this.judgmentDuelPhase = false;
+    this.judgmentDefender = defender;
+    this.judgmentLastAttacker = undefined;
+    this.roundResolving = false;
+    this.matchOver = false;
+    this.specialRoundLivesRestored = true;
+    this.roundTimerSeconds = 30;
+    this.roundEndsAt = this.time.now + this.roundTimerSeconds * 1000;
+    this.nextWeaponSpawnAt = this.time.now + WEAPON.specialFirstSpawnDelayMs;
+    this.nextCriticalPulseAt = 0;
+    this.clearWeaponsAndShots();
+    this.parryReadyAt.clear();
+    this.parryActiveUntil.clear();
+    this.botParryThinkAt.clear();
+    this.spinThrowTrackers.clear();
+    this.baseBombSpeedMultiplier = this.getRoundStage(2).bombSpeedMultiplier;
+    this.specialBombSpeedBonus = 0;
+    this.createArena(2);
+
+    defender.reviveAt(this.judgmentCenter.x, this.judgmentCenter.y);
+    defender.configureDash(PLAYER.specialDashCharges, true);
+    defender.resetDashCharges();
+
+    const attackers = this.players.filter((player) => player !== defender);
+    attackers.forEach((player, index) => {
+      const angle = -Math.PI / 2 + (Math.PI * 2 * index) / Math.max(attackers.length, 1);
+      const radius = this.judgmentInnerRadius + 142;
+      player.reviveAt(
+        this.judgmentCenter.x + Math.cos(angle) * radius,
+        this.judgmentCenter.y + Math.sin(angle) * radius
+      );
+      player.configureDash(PLAYER.specialDashCharges, true);
+      player.resetDashCharges();
+    });
+
+    const nextOwner = Phaser.Utils.Array.GetRandom(attackers);
+    if (!nextOwner) {
+      this.endMatch(defender);
+      return;
+    }
+
+    this.bomb.setIntensity(this.baseBombSpeedMultiplier);
+    this.transferBomb(nextOwner);
+    this.currentRoundMessageKey = "judgmentDefense";
+    this.updateHud(true);
+    this.cameras.main.flash(220, 255, 207, 51, false);
+    this.showRoundMessage(TEXT[this.language].judgmentDefense, "#ffcf33", 1900);
+    this.time.delayedCall(620, () => {
+      if (this.isJudgmentDefensePhase() && this.bomb.state === "HELD" && this.bomb.owner === nextOwner) {
+        this.launchBomb(new Phaser.Math.Vector2(defender.x - nextOwner.x, defender.y - nextOwner.y));
+      }
+    });
+  }
+
+  private startJudgmentDuel(challenger?: Player, defender?: Player) {
+    const duelDefender = defender ?? this.judgmentDefender;
+    const duelChallenger = challenger;
+    if (!duelDefender || !duelChallenger) {
+      this.endMatch(this.judgmentDefender ?? this.human);
+      return;
+    }
+
+    this.judgmentDuelPhase = true;
+    this.startFinalBattleMusic();
+    this.clearWeaponsAndShots();
+    this.players.forEach((player) => {
+      if (player !== duelDefender && player !== duelChallenger) {
+        player.setEliminated();
+        player.setBombHolder(false);
+      }
+    });
+
+    duelDefender.reviveAt(this.arenaRect.centerX - 170, this.arenaRect.centerY);
+    duelChallenger.reviveAt(this.arenaRect.centerX + 170, this.arenaRect.centerY);
+    this.currentRoundMessageKey = "finalDuel";
+    this.startRound(TEXT[this.language].finalDuel);
+  }
+
   private endMatch(winner: Player) {
     this.matchOver = true;
     this.roundResolving = true;
@@ -2714,7 +3047,9 @@ export class GameScene extends Phaser.Scene {
     });
 
     const lines = message.split("\n").length;
-    const isSpecialMessage = this.currentRoundMessageKey === "threePlayers" || this.currentRoundMessageKey === "livesRestored";
+    const isSpecialMessage = this.currentRoundMessageKey === "threePlayers" ||
+      this.currentRoundMessageKey === "livesRestored" ||
+      this.currentRoundMessageKey === "judgmentDefense";
     this.roundMessagePanel.setSize(
       isSpecialMessage ? 860 : lines > 1 ? 760 : 620,
       isSpecialMessage ? 190 : lines > 1 ? 154 : 118
@@ -2830,6 +3165,7 @@ export class GameScene extends Phaser.Scene {
 
   private getStageName(aliveCount: number) {
     const dictionary = TEXT[this.language];
+    if (this.isJudgmentDefensePhase()) return dictionary.judgment;
     if (aliveCount <= 2) return dictionary.finalDuel;
     if (aliveCount === 3) return dictionary.special;
     if (aliveCount <= 4) return dictionary.panic;
@@ -2896,6 +3232,74 @@ export class GameScene extends Phaser.Scene {
       new Phaser.Geom.Point(rect.left, rect.bottom - cutY),
       new Phaser.Geom.Point(rect.left, rect.top + cutY)
     ];
+  }
+
+  private keepPlayerInActiveArena(player: Player) {
+    if (this.isJudgmentDefensePhase()) {
+      this.keepPlayerInJudgmentArena(player);
+      return;
+    }
+
+    player.keepInside(this.arenaRect);
+    if (this.arenaPolygon) {
+      player.keepInsidePolygon(this.arenaPolygon, this.arenaPolygonCenter);
+    }
+  }
+
+  private keepPlayerInJudgmentArena(player: Player) {
+    const toPlayer = new Phaser.Math.Vector2(player.x - this.judgmentCenter.x, player.y - this.judgmentCenter.y);
+    const distance = toPlayer.length();
+    const isDefender = player === this.judgmentDefender;
+    const maxRadius = (isDefender ? this.judgmentInnerRadius - 12 : this.judgmentOuterRadius) - PLAYER.radius;
+    const minRadius = isDefender ? 0 : this.judgmentInnerRadius + PLAYER.radius + 22;
+
+    if (distance === 0) {
+      toPlayer.set(1, 0);
+    } else {
+      toPlayer.normalize();
+    }
+
+    const clampedDistance = Phaser.Math.Clamp(distance, minRadius, maxRadius);
+    if (Math.abs(clampedDistance - distance) <= 0.5) {
+      return;
+    }
+
+    player.container.setPosition(
+      this.judgmentCenter.x + toPlayer.x * clampedDistance,
+      this.judgmentCenter.y + toPlayer.y * clampedDistance
+    );
+    player.velocity.scale(-0.2);
+  }
+
+  private resolveJudgmentBombBounds() {
+    if (!this.judgmentPhase || this.judgmentDuelPhase || this.bomb.state === "HELD") {
+      return;
+    }
+
+    const toBomb = new Phaser.Math.Vector2(this.bomb.x - this.judgmentCenter.x, this.bomb.y - this.judgmentCenter.y);
+    const distance = toBomb.length();
+    const maxRadius = this.judgmentOuterRadius - BOMB.radius;
+    if (distance <= maxRadius) {
+      return;
+    }
+
+    if (distance === 0) {
+      toBomb.set(1, 0);
+    } else {
+      toBomb.normalize();
+    }
+
+    this.bomb.shape.setPosition(
+      this.judgmentCenter.x + toBomb.x * maxRadius,
+      this.judgmentCenter.y + toBomb.y * maxRadius
+    );
+    this.bomb.fuse.setPosition(this.bomb.x, this.bomb.y);
+    this.bomb.directionRing.setPosition(this.bomb.x, this.bomb.y);
+
+    const dot = this.bomb.velocity.dot(toBomb);
+    if (dot > 0) {
+      this.bomb.velocity.subtract(toBomb.scale(2 * dot));
+    }
   }
 
   private setTextIfChanged(
@@ -3081,6 +3485,10 @@ export class GameScene extends Phaser.Scene {
       return TEXT[this.language].finalDuel;
     }
 
+    if (this.currentRoundMessageKey === "judgmentDefense") {
+      return TEXT[this.language].judgmentDefense;
+    }
+
     if (this.currentRoundMessageKey === "playersRemain") {
       return TEXT[this.language].playersRemain(aliveCount);
     }
@@ -3116,7 +3524,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private updateHumanLivesHud() {
-    const isVisible = this.getAlivePlayers().length <= 3;
+    const isVisible = this.isFinalPhase();
     this.hudLivesLabel.setVisible(isVisible);
     for (let index = 0; index < this.humanLifeHudPips.length; index += 1) {
       this.humanLifeHudPips[index].setVisible(isVisible);
@@ -3135,7 +3543,7 @@ export class GameScene extends Phaser.Scene {
   private updateScoreboard() {
     const alivePlayers = this.getAlivePlayers();
     const dictionary = TEXT[this.language];
-    const isVisible = alivePlayers.length <= 3;
+    const isVisible = this.isFinalPhase();
     this.scoreboardPanel.setVisible(isVisible);
     this.scoreboardTitle.setVisible(isVisible);
     this.scoreboardTitle.setText(dictionary.lives);
@@ -3176,6 +3584,11 @@ export class GameScene extends Phaser.Scene {
     const moveDirection = new Phaser.Math.Vector2(0, 0);
     let shouldDash = false;
     const shouldParry = this.shouldBotParry(bot);
+
+    if (this.isJudgmentDefensePhase()) {
+      return this.getJudgmentBotIntent(bot, aimTarget, shouldParry);
+    }
+
     const shotThreat = this.getShotThreat(bot);
     if (shotThreat.risk > 0) {
       moveDirection.copy(shotThreat.escapeDirection);
@@ -3236,6 +3649,64 @@ export class GameScene extends Phaser.Scene {
     }
 
     return { aimTarget, moveDirection, shouldDash, shouldParry };
+  }
+
+  private getJudgmentBotIntent(bot: Player, fallbackAimTarget: Phaser.Math.Vector2, shouldParry: boolean): BotIntent {
+    const moveDirection = new Phaser.Math.Vector2(0, 0);
+    const defender = this.judgmentDefender;
+    const aimTarget = defender && defender !== bot
+      ? new Phaser.Math.Vector2(defender.x, defender.y)
+      : fallbackAimTarget;
+    let shouldDash = false;
+
+    const threat = this.getBombThreat(bot);
+    if (threat.risk > 0) {
+      moveDirection.copy(threat.escapeDirection);
+      shouldDash = threat.risk > 0.86 && bot.dashChargeCount > 0;
+      return { aimTarget, moveDirection, shouldDash, shouldParry };
+    }
+
+    const shotThreat = this.getShotThreat(bot);
+    if (shotThreat.risk > 0) {
+      moveDirection.copy(shotThreat.escapeDirection);
+      shouldDash = shotThreat.risk > 0.88 && bot.dashChargeCount > 0;
+      return { aimTarget, moveDirection, shouldDash, shouldParry };
+    }
+
+    if (bot === defender) {
+      const pickup = this.getNearestWeaponPickup(bot);
+      if (!bot.hasWeapon && pickup) {
+        moveDirection.set(pickup.shape.x - bot.x, pickup.shape.y - bot.y).normalize();
+      } else {
+        const away = this.bomb.owner && this.bomb.owner !== bot
+          ? new Phaser.Math.Vector2(bot.x - this.bomb.owner.x, bot.y - this.bomb.owner.y)
+          : new Phaser.Math.Vector2(this.judgmentCenter.x - bot.x, this.judgmentCenter.y - bot.y);
+        moveDirection.copy(away.lengthSq() > 0 ? away.normalize() : moveDirection);
+      }
+      return { aimTarget, moveDirection, shouldDash, shouldParry };
+    }
+
+    const toBot = new Phaser.Math.Vector2(bot.x - this.judgmentCenter.x, bot.y - this.judgmentCenter.y);
+    const guardPoint = this.getJudgmentGuardPoint(bot);
+    const distanceToGuard = Phaser.Math.Distance.Between(bot.x, bot.y, guardPoint.x, guardPoint.y);
+    if (distanceToGuard > 34) {
+      moveDirection.set(guardPoint.x - bot.x, guardPoint.y - bot.y).normalize();
+    } else if (this.bomb.owner === defender && toBot.lengthSq() > 0) {
+      moveDirection.copy(toBot.normalize());
+    }
+
+    return { aimTarget, moveDirection, shouldDash, shouldParry };
+  }
+
+  private getJudgmentGuardPoint(bot: Player) {
+    const attackers = this.players.filter((player) => player !== this.judgmentDefender);
+    const index = Math.max(0, attackers.findIndex((player) => player === bot));
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / Math.max(attackers.length, 1);
+    const radius = this.judgmentInnerRadius + 142;
+    return new Phaser.Math.Vector2(
+      this.judgmentCenter.x + Math.cos(angle) * radius,
+      this.judgmentCenter.y + Math.sin(angle) * radius
+    );
   }
 
   private shouldBotParry(bot: Player) {

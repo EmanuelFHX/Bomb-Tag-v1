@@ -140,7 +140,7 @@ export class Bomb {
     this.launchedAt = this.scene.time.now;
     this.ricochets = 0;
     this.canTransferAt = this.scene.time.now + BOMB.parryTransferCooldownMs;
-    this.homingTarget = target;
+    this.homingTarget = null;
     this.breaksParry = false;
     this.setParryFlaming(true);
     this.clearTrail();
