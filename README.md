@@ -58,7 +58,7 @@ Para a melhor experiência atual, recomenda-se jogar no **desktop**.
 
 ### Menu principal
 
-![Menu do Ultimante Bomb Tag](./demo/)
+![Menu do Ultimante Bomb Tag](./demo/Menu.png)
 
 ---
 
