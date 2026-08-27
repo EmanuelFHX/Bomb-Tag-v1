@@ -376,6 +376,10 @@ export class Player {
     this.updateVisualState();
   }
 
+  aimAt(target: Phaser.Math.Vector2) {
+    this.updateAim(target.x - this.x, target.y - this.y);
+  }
+
   keepInside(rect: Phaser.Geom.Rectangle) {
     const minX = rect.left + PLAYER.radius;
     const maxX = rect.right - PLAYER.radius;

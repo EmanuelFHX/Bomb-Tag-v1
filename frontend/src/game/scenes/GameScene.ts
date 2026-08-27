@@ -88,6 +88,7 @@ type RemotePlayerSlot = {
 };
 
 type SpinThrowTracker = {
+  startAngle: number;
   lastAngle: number;
   startedAt: number;
   turnAmount: number;
@@ -851,6 +852,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleHumanAction() {
+    this.refreshHumanAimForAction();
     if (this.isOnlineGuest()) {
       this.queueOnlinePlayerAction("primary");
       return;
@@ -865,12 +867,19 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleHumanParry() {
+    this.refreshHumanAimForAction();
     if (this.isOnlineGuest()) {
       this.queueOnlinePlayerAction("parry");
       return;
     }
 
     this.tryParry(this.human);
+  }
+
+  private refreshHumanAimForAction() {
+    const moveDirection = this.inputSystem.getMoveDirection();
+    this.human.aimAt(this.getHumanAimTarget(moveDirection));
+    this.updateSpinThrowReadiness(this.human);
   }
 
   private queueOnlinePlayerAction(actionType: OnlinePlayerSnapshot["actionType"]) {
@@ -923,6 +932,7 @@ export class GameScene extends Phaser.Scene {
     const tracker = this.spinThrowTrackers.get(player.id);
     if (!tracker) {
       this.spinThrowTrackers.set(player.id, {
+        startAngle: angle,
         lastAngle: angle,
         startedAt: now,
         turnAmount: 0,
@@ -934,6 +944,7 @@ export class GameScene extends Phaser.Scene {
     const delta = Math.abs(Phaser.Math.Angle.Wrap(angle - tracker.lastAngle));
     if (now - tracker.startedAt > BOMB.spinThrowWindowMs) {
       tracker.startedAt = now;
+      tracker.startAngle = angle;
       tracker.turnAmount = 0;
     }
 
@@ -942,7 +953,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    tracker.turnAmount += delta;
+    tracker.turnAmount = Math.max(tracker.turnAmount + delta, Math.abs(Phaser.Math.Angle.Wrap(angle - tracker.startAngle)));
     if (tracker.turnAmount < BOMB.spinThrowMinRadians) {
       return;
     }
