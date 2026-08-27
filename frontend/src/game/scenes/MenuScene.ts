@@ -68,7 +68,7 @@ const MENU_TEXT = {
     promptRoom: "Código da sala",
     ok: "OK",
     cancel: "CANCELAR",
-    version: "v0.1.0 DEV BUILD"
+    version: "v0.3.4 BUILD"
   }
 } as const;
 
