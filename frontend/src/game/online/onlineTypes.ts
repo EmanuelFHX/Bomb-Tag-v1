@@ -150,6 +150,11 @@ export type OnlineCombatEventDraft =
       challengerId?: string;
     }
   | {
+      type: "judgmentOrbComplete";
+      collectorId: string;
+      defenderId: string;
+    }
+  | {
       type: "roundMessage";
       message: string;
       color: string;
